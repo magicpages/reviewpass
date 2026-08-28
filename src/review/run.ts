@@ -589,9 +589,44 @@ export function capPerRegion(findings: Finding[], perRegion = 2): Finding[] {
   return out;
 }
 
+/**
+ * A request for more test coverage, rather than a report of a defect.
+ *
+ * These are true, in scope, and worth almost nothing individually. On a pull
+ * request that added a lot of tests, twenty of twenty-five findings asked for
+ * another assertion, and the one finding that described an actual bug -
+ * orphaned objects in storage after a partial upload - sat nineteenth. Both
+ * verification gates pass them correctly: the test really does not assert that.
+ *
+ * They are not dropped. A missing assertion is a real gap and the author may
+ * well want it. They are ranked under anything that describes something the
+ * code does wrong, because a reader's attention runs out long before the list
+ * does, and it should run out on the defects.
+ */
+function isCoverageRequest(f: Finding): boolean {
+  const onTestFile = /\.(test|spec)\.[jt]sx?$|__tests__\//.test(f.path);
+  const asksForCoverage =
+    /^\s*(add|write)\b.*\b(test|tests|case|coverage)\b/i.test(f.title) ||
+    /^\s*(assert|test|verify)\b/i.test(f.title) ||
+    /\bdoes not assert\b|\bis not asserted\b|\bno assertion\b/i.test(f.title);
+  // File location is a hint, not the rule. "Test the PDF function" is a request
+  // for coverage wherever it is anchored - it was anchored on the source file
+  // and so ranked first, above the defect it was meant to sit under. An
+  // assertion-shaped title is only a coverage request on a test file, though:
+  // "assert the signature is valid" about production code is a real finding.
+  const explicit = /^\s*(add|write|test)\b/i.test(f.title);
+  return asksForCoverage && (onTestFile || explicit);
+}
+
 export function rankAndCap(findings: Finding[], max: number): Finding[] {
   return capPerRegion(collapseNearDuplicates(findings))
     .sort((a, b) => {
+      // Defects first, whatever their importance. This is the one ordering rule
+      // that does not go through importance, because the two kinds are not
+      // comparable on that scale: a missing assertion and a data-loss bug can
+      // both be rated 4 and only one of them is why anybody opened the review.
+      const cov = Number(isCoverageRequest(a)) - Number(isCoverageRequest(b));
+      if (cov !== 0) return cov;
       // The verifier's importance leads, because it judged the finding against
       // the whole file while severity was assigned by the find pass before any
       // of that was checked - and severity was measured to be a weak predictor
