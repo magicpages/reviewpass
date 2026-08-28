@@ -84,7 +84,18 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
   const out: string[] = [];
 
   if (r.findings.length === 0) {
-    out.push('Nothing to raise.');
+    // "Nothing to raise" is a claim about the code. It is only true if the code
+    // was read. On a pull request where every model call returned 402 for an
+    // exhausted account, this said exactly that, and the check went green: a
+    // review that never ran, reported as a clean one. Silence has to mean
+    // silence, not absence of evidence.
+    out.push(
+      r.failedFiles && r.failedFiles > 0
+        ? (r.reviewedFiles === 0
+            ? `**This review did not run.** All ${r.failedFiles} file(s) failed. Nothing here says anything about the code.`
+            : `**Incomplete review.** ${r.failedFiles} of ${r.failedFiles + (r.reviewedFiles ?? 0)} file(s) failed; nothing was raised in the rest.`)
+        : 'Nothing to raise.',
+    );
   } else {
     const bySeverity = new Map<string, number>();
     for (const f of r.findings) bySeverity.set(f.severity, (bySeverity.get(f.severity) ?? 0) + 1);

@@ -121,4 +121,13 @@ export interface ReviewResult {
   checks: PreMergeCheck[];
   event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   skipped: { path: string; reason: string }[];
+  /**
+   * How much of the review actually happened.
+   *
+   * Carried so the summary cannot claim a clean review that never ran. An
+   * exhausted model account failed every file on a live pull request and the
+   * review still said "Nothing to raise" with a green check.
+   */
+  reviewedFiles?: number;
+  failedFiles?: number;
 }

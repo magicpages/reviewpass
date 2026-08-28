@@ -96,6 +96,25 @@ async function standalone(token: string, prNumber: number, selfLogin?: string): 
   );
   core.setOutput('findings', String(outcome.result.findings.length));
   core.setOutput('event', outcome.result.event);
+  core.setOutput('reviewed-files', String(outcome.result.reviewedFiles ?? 0));
+  core.setOutput('failed-files', String(outcome.result.failedFiles ?? 0));
+
+  // A review that reviewed nothing is not a passing check.
+  //
+  // An exhausted model account returned 402 for every file on a live pull
+  // request. Each failure was a warning, the run exited zero, the check went
+  // green, and the review body read "Nothing to raise" — the one outcome a
+  // reader would take as an all-clear. Warnings are invisible on a green run.
+  //
+  // Partial failure stays green deliberately: some files reviewed is a real
+  // review, and the summary now says how many were missed. Total failure is a
+  // different thing and has to be loud.
+  if ((outcome.result.failedFiles ?? 0) > 0 && (outcome.result.reviewedFiles ?? 0) === 0) {
+    core.setFailed(
+      `No file could be reviewed: all ${outcome.result.failedFiles} failed. ` +
+      'The posted review says nothing about this code.',
+    );
+  }
 }
 
 /** A comment event is a conversation turn, not a review trigger. */

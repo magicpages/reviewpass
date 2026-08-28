@@ -469,9 +469,11 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   ]);
 
   const event = decideEvent(findings, cfg, failures > 0);
+  const reviewedFiles = units.length - failures;
   const result: ReviewResult = {
     findings, walkthrough: walk.summary, fileGroups: walk.groups,
     effort: walk.effort, mergeRisk: walk.mergeRisk, checks, event, skipped,
+    reviewedFiles, failedFiles: failures,
   };
 
   // ── post ──────────────────────────────────────────────────────────────────
