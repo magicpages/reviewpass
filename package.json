@@ -1,0 +1,65 @@
+{
+  "name": "@magicpages/reviewpass",
+  "version": "0.1.0",
+  "description": "A pull request reviewer that verifies every finding against the code before posting it. Runs as a GitHub Action, a CLI, or an agent skill.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx src/cli.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --minify",
+    "typecheck": "tsc --noEmit",
+    "daemon": "tsx src/server/main.ts",
+    "build:daemon": "esbuild src/server/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/reviewpassd.cjs --external:better-sqlite3 --external:sqlite-vec",
+    "build:cli": "tsc -p tsconfig.build.json"
+  },
+  "keywords": [
+    "code-review",
+    "github-action",
+    "pull-request",
+    "static-analysis",
+    "llm",
+    "ai-code-review"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
+    "better-sqlite3": "^13.0.3",
+    "sqlite-vec": "^0.1.9",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.3.0",
+    "@vercel/ncc": "^0.45.0",
+    "esbuild": "^0.28.2",
+    "ts-parser": "npm:typescript@5.9",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "bin": {
+    "reviewpass": "dist/lib/cli.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    ".reviewpass.example.yaml",
+    "README.md",
+    "action.yml",
+    "LICENSE",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/magicpages/reviewpass.git"
+  },
+  "bugs": {
+    "url": "https://github.com/magicpages/reviewpass/issues"
+  },
+  "homepage": "https://github.com/magicpages/reviewpass#readme",
+  "engines": {
+    "node": ">=22"
+  }
+}

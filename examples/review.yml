@@ -1,0 +1,60 @@
+# Copy this into .github/workflows/ of the repository you want reviewed.
+# It does not run here; it is an example.
+name: reviewpass
+
+# Two kinds of event, two kinds of work.
+#
+#   a push  -> re-read the code and review it
+#   a reply -> re-read the argument and answer it
+#
+# They are separate because folding them together meant a reply either triggered
+# a whole re-review, spending minutes of model time to say nothing about what was
+# actually said, or was silently mined for learnings and never answered at all.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Every reply to a review comment, with no `@reviewpass` needed. A maintainer
+  # correcting a finding should not have to summon the thing that posted it.
+  # Replies to threads reviewpass did not open resolve to no rebuttal and the
+  # job ends in seconds, which is cheaper than making people remember a mention.
+  pull_request_review_comment:
+    types: [created]
+
+concurrency:
+  # Keyed on the pull request, so a superseded push does not queue behind a
+  # stale run. Replies are *not* cancelled in progress: two maintainers
+  # answering two findings at once are two conversations, not a race.
+  group: reviewpass-${{ github.event.pull_request.number }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.in_reply_to_id != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      # Required: the code graph and the context engine read the working tree.
+      # A shallow checkout is fine.
+      # Pinned to a commit: tags are mutable, so `@v4` trusts whoever can move it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: magicpages/reviewpass@v1
+        with:
+          # Posting as your own App makes approvals count toward branch
+          # protection; github-actions[bot] approvals never do. Drop these two
+          # lines to fall back to the default token, which comments but cannot
+          # gate a merge. `npx @magicpages/reviewpass init-app` creates the App.
+          app-id: ${{ secrets.REVIEWPASS_APP_ID }}
+          private-key: ${{ secrets.REVIEWPASS_PRIVATE_KEY }}
+        env:
+          REVIEWPASS_API_KEY: ${{ secrets.REVIEWPASS_API_KEY }}
+          REVIEWPASS_ENDPOINT: https://openrouter.ai/api/v1
+          # Your source is sent to whichever provider serves the request.
+          REVIEWPASS_ZDR: '1'

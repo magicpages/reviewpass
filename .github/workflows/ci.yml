@@ -1,0 +1,52 @@
+name: ci
+
+# Fork pull requests run here. Everything below assumes the code being built is
+# untrusted, because on a public repository it is.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only by default. No job here writes anything, and a token that cannot
+# write cannot be turned into one that does.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commits rather than tags: a tag is mutable, so `@v4` trusts
+      # whoever is able to move it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      # `--ignore-scripts` is the point of this job's threat model: a pull
+      # request can add a dependency, or a `postinstall` of its own, and install
+      # scripts run before any review happens. Nothing here needs them.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run typecheck
+      - run: npm run build
+
+      # The committed bundle is what actually runs when somebody writes
+      # `uses: magicpages/reviewpass@v1`, and it is 4 MB of minified code that
+      # no reviewer reads. Rebuilding it here and failing on a difference is
+      # what ties it to the source in this pull request: a change to the bundle
+      # alone, or a bundle that quietly does something the source does not,
+      # stops here rather than at whoever installs the action.
+      - name: Verify the committed bundle matches the source
+        run: |
+          if ! git diff --quiet -- dist/index.cjs; then
+            echo "::error::dist/index.cjs does not match a build of this source."
+            echo "Run 'npm run build' and commit the result."
+            git diff --stat -- dist/index.cjs
+            exit 1
+          fi
+          echo "Bundle matches the source."
+
+# No secrets are referenced anywhere in this file, deliberately. A workflow that
+# a fork can trigger and that can read a secret is the whole of the attack; the
+# defence is not having one.

@@ -1,0 +1,48 @@
+[Unit]
+Description=reviewpass PR review daemon
+Documentation=https://github.com/magicpages/reviewpass
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reviewpass
+Group=reviewpass
+
+# Bound to loopback: the self-hosted runners are on this machine, and each
+# request carries a GitHub token that must not cross the network.
+Environment=REVIEWPASS_HOST=127.0.0.1
+Environment=REVIEWPASS_PORT=8787
+Environment=REVIEWPASS_DB=/var/lib/reviewpass/reviewpass.db
+Environment=REVIEWPASS_MIRRORS=/var/lib/reviewpass/mirrors
+Environment=REVIEWPASS_WORK=/var/lib/reviewpass/work
+# The model serves one slot, so a second concurrent review only queues work.
+Environment=REVIEWPASS_JOBS=1
+# Shared secret the Action must present. Keep it in an EnvironmentFile.
+EnvironmentFile=-/etc/reviewpass/reviewpassd.env
+
+WorkingDirectory=/opt/reviewpass
+ExecStart=/usr/bin/node /opt/reviewpass/dist/reviewpassd.cjs
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+
+# A review shells out to git, ripgrep and the repo's own linters, so the
+# sandbox has to stay loose enough for that while keeping the host protected.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/reviewpass
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=reviewpassd
+
+[Install]
+WantedBy=multi-user.target

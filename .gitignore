@@ -1,0 +1,33 @@
+node_modules/
+
+# The Action's bundle is committed, because `uses:` resolves `dist/index.cjs`
+# at a tag and GitHub does not build anything for you. Only that one file: the
+# CLI's `dist/lib/` is built at publish time by npm and nobody consumes it from
+# git. CI rebuilds the bundle and fails if it differs from the committed copy,
+# so a pull request cannot ship a bundle that does not match its source.
+dist/*
+!dist/index.cjs
+
+# Credentials. `init-app` writes a GitHub App key into the working directory,
+# and the model endpoint is configured through the environment.
+*.pem
+*.private-key.pem
+.env
+.env.*
+
+# The learnings store. It holds rules and corrections mined from whichever
+# repository this ran against, so it is local state and must never be source.
+# Matched by file name as well as by directory: the store lived in `.warren/`
+# under this project's previous name, and a directory rule tied to the current
+# name silently stopped covering it. A rename should not be able to publish a
+# database of somebody's private code.
+.reviewpass/
+.reviewpass
+.warren/
+learnings.db*
+learnings.json*
+
+# Scratch: ad-hoc probes and benchmarks written against private repositories.
+.probe/
+bench/
+*.log

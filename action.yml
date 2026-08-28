@@ -1,0 +1,64 @@
+name: 'reviewpass'
+description: 'Reviews pull requests with your own llama.cpp model. Posts inline comments and approves or requests changes.'
+author: 'magicpages'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'green'
+
+inputs:
+  github-token:
+    description: >-
+      Token used to read the PR and post the review. Needs pull-requests: write.
+      Posts as github-actions[bot], whose approvals do NOT count toward branch
+      protection - set app-id and private-key instead if the verdict must gate a
+      merge.
+    required: false
+    default: ${{ github.token }}
+  app-id:
+    description: >-
+      Numeric id of a GitHub App you own. Set together with private-key to review
+      under your own bot identity, whose approvals do count. Run
+      `npx @magicpages/reviewpass init-app` to create one.
+    required: false
+  private-key:
+    description: 'The App private key (the whole .pem). Store it as a secret.'
+    required: false
+  daemon-url:
+    description: >-
+      URL of reviewpassd on the runner host, e.g. http://127.0.0.1:8787. When set,
+      the Action posts the job there and the daemon does the work using its own
+      mirror, database and model. Leave unset to run the pipeline in this job.
+    required: false
+  daemon-token:
+    description: 'Shared secret, if reviewpassd was started with REVIEWPASS_TOKEN.'
+    required: false
+  model-endpoint:
+    description: 'Standalone mode only: OpenAI-compatible base URL.'
+    required: false
+  model:
+    description: 'Model name to request from that endpoint.'
+    required: false
+  profile:
+    description: 'assertive (report everything) or chill (drop trivial findings).'
+    required: false
+  pr-number:
+    description: 'PR to review. Defaults to the one in the event payload.'
+    required: false
+  full-review:
+    description: 'Re-review the whole PR instead of only the new commits.'
+    required: false
+    default: 'false'
+  workspace:
+    description: 'Checkout root. Defaults to GITHUB_WORKSPACE.'
+    required: false
+
+outputs:
+  findings:
+    description: 'Number of findings posted.'
+  event:
+    description: 'APPROVE, REQUEST_CHANGES or COMMENT.'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.cjs'

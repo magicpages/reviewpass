@@ -1,0 +1,116 @@
+# Copy to `.reviewpass.yaml` at your repository root. Every key is optional — what
+# is shown here is the shipped default unless noted. Delete anything you are
+# happy with; a repository with no config at all works.
+
+model:
+  # Any OpenAI-compatible endpoint: a hosted broker, a vendor API, or your own
+  # llama.cpp / vLLM server. Set REVIEWPASS_API_KEY for the bearer token.
+  endpoint: https://openrouter.ai/api/v1
+
+  # Finding and verifying are different jobs and want different models. The find
+  # pass wants recall and runs several times per file, so it should be cheap.
+  # The verify pass decides what a person actually sees, and a weak model here
+  # is worse than none: it rejects real defects and waves through invented ones.
+  name: deepseek/deepseek-v4-flash
+  verifyModel: openai/gpt-5.6-luna
+
+  temperature: 0.1
+
+  # A reasoning model spends most of its budget before emitting any JSON. Lower
+  # this and you get empty completions rather than short ones.
+  maxTokens: 16384
+
+  # Two ceilings on how much surrounding code is sent, and the smaller wins.
+  # `contextBudget` is the whole-review budget in tokens, shared across changed
+  # files. `contextRatio` keeps context proportional to the change itself: a
+  # 600-character diff does not get clearer when wrapped in 16k characters of
+  # its neighbours. Set contextRatio to 0 to disable the second ceiling.
+  contextBudget: 120000
+  contextRatio: 3
+
+  requestTimeoutMs: 900000
+
+  # Routing sent verbatim to the endpoint, for brokers that accept it. The shape
+  # is the broker's; reviewpass passes it through without interpreting it. Omit the
+  # whole block for a plain OpenAI-compatible server.
+  #
+  # Reviewing sends your source to whoever serves the request, so on a broker
+  # this is where you constrain that. Ordering matters too: left to route on
+  # price, a broker can pick a provider serving the same model an order of
+  # magnitude slower than the fast end of its pool.
+  #
+  # provider:
+  #   zdr: true                    # zero-data-retention providers only
+  #   order: [provider-a, provider-b]
+  #   allow_fallbacks: true
+  #
+  # `REVIEWPASS_ZDR=1` in the environment is shorthand for `provider: { zdr: true }`
+  # when no provider block is configured — useful in CI without a config file.
+
+review:
+  # `assertive` reports everything that survives verification; `chill` drops the
+  # trivial tier at the find stage.
+  profile: assertive
+
+  # Severity that turns the review into REQUEST_CHANGES. `critical` by default
+  # because a reviewer that blocks often gets muted, and blocking is a social
+  # act rather than a technical one.
+  requestChangesAt: critical
+
+  approveWhenClean: true
+
+  # A safety valve against a pathological diff, not a target. Findings are
+  # ranked, and everything that is true and in scope is reported — if a change
+  # genuinely has twenty problems, twenty is the correct answer.
+  maxFindings: 100
+
+  # Findings rated at or below this by the verifier are dropped as trivia. The
+  # verifier rates 1-10 and refuses only what is untrue or out of scope; volume
+  # is controlled by ranking, never by refusing real defects.
+  minImportance: 2
+
+  # Passes over each file, unioned. The first two look for defects generally;
+  # the third looks across files; the fourth looks for what the code does *not*
+  # do, which is the failure a diff cannot show you. Drop to 2 for speed.
+  findSamples: 4
+
+  incremental: true
+  verify: true
+  postWalkthrough: true
+
+# Files never worth reading. Generated output, lockfiles and binaries.
+pathFilters:
+  - '!**/*.snap'
+  - '!**/*.lock'
+  - '!**/dist/**'
+  - '!**/node_modules/**'
+
+# Extra instructions for paths matching a glob. Repository convention files
+# (CLAUDE.md, AGENTS.md, CONTRIBUTING.md, .cursorrules) are read automatically —
+# this is for rules that live nowhere else.
+pathInstructions: []
+#  - path: 'src/api/**'
+#    instructions: |
+#      Routes validate their request body before use. Flag a handler that reads
+#      request data without validating it first.
+
+tools:
+  # Both run in the workspace before review and their output is given to the
+  # reviewer. A green type checker also lets the verifier refute findings that
+  # claim a type error. In a worktree without node_modules, dependencies are
+  # linked from the primary checkout automatically.
+  eslint: true
+  tsc: true
+  custom: []
+
+checks:
+  title: true
+  description: true
+  linkedIssues: true
+  outOfScope: true
+
+learnings:
+  # Knowledge carried between reviews: conventions a maintainer stated once in a
+  # reply that should not have to be restated.
+  enabled: true
+  dbPath: .reviewpass/learnings.json
