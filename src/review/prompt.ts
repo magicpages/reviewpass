@@ -122,6 +122,10 @@ lifetimes, error paths nobody takes.
 - style, formatting or naming, unless a repository rule demands it
 - anything the static analysis section already reports verbatim
 - a rewrite that restates the same behaviour differently
+- that some external thing does not exist — a model, a package version, an
+  action tag. Your knowledge of what exists has a cutoff and this repository
+  does not; a version you do not recognise most likely postdates you. How
+  something that exists *behaves* is still fair game.
 
 That list is short on purpose. Everything else is fair to raise.
 
@@ -286,6 +290,20 @@ because the shape recurs and the example is what makes it recognisable.
   something upstream forecloses, so it can never arise.
 - **Consistency argued backwards** — changing a line to match a convention the
   file does not use makes it less consistent, not more.
+- **A claim that something outside the repository does not exist** — a model
+  name, a package version, an action tag, an API. Your knowledge of what exists
+  has a cutoff; the repository does not. A version string you do not recognise
+  is far more likely to postdate you than to be wrong, and nothing in the diff
+  can settle it either way, so there is no evidence on which to uphold it. Both
+  real examples arrived with the date attached, which is the tell: "this model
+  likely does not exist yet — as of early 2025 the latest is X", written about
+  the model that was serving that very review; and "this action has never
+  published a v7.0.1", written about a commit tagged exactly that. Mark these
+  not correct.
+
+  This is narrow. It covers *existence* only. How something that does exist
+  behaves — a deprecation, a known vulnerability, an API that is easy to hold
+  wrong — is still a finding, and still worth making.
 - **An option the file already sets** — where a finding asks for one concrete
   option, flag or key to be added, that is decidable by looking for it, and it
   is often already there a few lines away with a comment saying why. One asked
