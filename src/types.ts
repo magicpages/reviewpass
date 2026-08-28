@@ -130,4 +130,6 @@ export interface ReviewResult {
    */
   reviewedFiles?: number;
   failedFiles?: number;
+  /** Set when nothing could be reviewed for a reason the author cannot fix. */
+  blocked?: { message: string };
 }

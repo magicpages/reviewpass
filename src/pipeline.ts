@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, envAny, type ReviewpassConfig } from './config/index.js';
 import { ModelClient } from './model/client.js';
+import { blockerFor } from './model/blocked.js';
 import { GitHubClient, type ReviewPlan } from './github/client.js';
 import { selectFiles, groupFiles } from './context/select.js';
 import { mineInstructions, rulesFor } from './context/instructions.js';
@@ -383,6 +384,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
 
   // ── find ──────────────────────────────────────────────────────────────────
   let failures = 0;
+  const failureErrors: unknown[] = [];
   const found = (await mapLimit(units, concurrency, async (unit) => {
     try {
       const fs = await findInFile(model, cfg, pr, unit);
@@ -390,6 +392,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       return fs;
     } catch (err) {
       failures++;
+      failureErrors.push(err);
       log.warn(`review failed for ${unit.path}: ${err}`);
       return [] as Finding[];
     }
@@ -470,10 +473,13 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
 
   const event = decideEvent(findings, cfg, failures > 0);
   const reviewedFiles = units.length - failures;
+  // Every file hit the same wall, and it is a wall the author of this pull
+  // request cannot climb. Say so plainly instead of reporting a clean review.
+  const blocked = blockerFor(failureErrors, units.length) ?? undefined;
   const result: ReviewResult = {
     findings, walkthrough: walk.summary, fileGroups: walk.groups,
     effort: walk.effort, mergeRisk: walk.mergeRisk, checks, event, skipped,
-    reviewedFiles, failedFiles: failures,
+    reviewedFiles, failedFiles: failures, blocked,
   };
 
   // ── post ──────────────────────────────────────────────────────────────────
