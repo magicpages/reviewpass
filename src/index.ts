@@ -173,6 +173,48 @@ async function main() {
     ctx.payload.issue?.number;
   if (!prNumber) throw new Error('no pull request in context; pass pr-number');
 
+  /**
+   * A reply is answered, never re-reviewed.
+   *
+   * This is the failure that produced roughly five hundred comments on one pull
+   * request. The workflow admits `pull_request_review_comment` events expecting
+   * them to be answered; the deployed Action had no branch for them, so every
+   * reply fell through to a full re-review. Ninety-nine replies became
+   * sixty-three reviews.
+   *
+   * The bug was a missing branch, but the damage came from what the code did
+   * without one: it fell through to the most expensive and least reversible
+   * thing it knows how to do. So this returns rather than continuing, and the
+   * check below refuses to run a review for a reply event at all — an event
+   * this build cannot answer must end in nothing happening, not in a review.
+   */
+  const isReplyEvent = ctx.eventName === 'pull_request_review_comment';
+  const replyTo = isReplyEvent
+    ? (ctx.payload.comment as { in_reply_to_id?: number } | undefined)?.in_reply_to_id
+    : undefined;
+
+  if (isReplyEvent) {
+    if (!replyTo) {
+      core.info('A new review comment, not a reply to one. Nothing to answer.');
+      return;
+    }
+    core.info('Answering a reply');
+    const { runRespond } = await import('./respond.js');
+    const out = await runRespond({
+      token,
+      selfLogin: identity.login,
+      owner: ctx.repo.owner,
+      repo: ctx.repo.repo,
+      prNumber,
+      workspace: core.getInput('workspace') || process.env.GITHUB_WORKSPACE || process.cwd(),
+      onlyThreadRootId: replyTo,
+      log: core.info,
+    });
+    core.setOutput('answered', String(out.answered));
+    core.setOutput('conceded', String(out.conceded));
+    return;
+  }
+
   const daemonUrl = core.getInput('daemon-url') || envAny('DAEMON_URL');
   if (daemonUrl) {
     core.info(`Delegating to the daemon at ${daemonUrl}`);
