@@ -12,27 +12,37 @@ is **true of the code** and **belongs on this change**; findings that cite files
 which do not exist, or that report the same defect twice in different words, are
 dropped before a person ever sees them.
 
-## When a daemon is worth it
+## Running it
 
-Only when your runners sit on the same machine as your models. Then a
-self-contained Action wastes what that proximity buys: it would throw away state after every run, re-clone the
-repository each time, and cross the network to reach a GPU sitting in the next
-process.
+Three ways, one pipeline — as a GitHub Action on a pull request, as a CLI over a
+local git range, or as a skill inside a coding agent.
+**[docs/running-it.md](docs/running-it.md)** has the commands, the workflow file,
+and what differs between them.
 
-`reviewpassd` keeps what a reviewer needs to be good:
+Try it on your own uncommitted work, which posts nothing anywhere:
 
-| | Action-only | reviewpassd |
-|:---|:---|:---|
-| **Memory** | a JSON file restored from an Actions cache key | a real SQLite database of learnings, rejections and every finding ever posted |
-| **Cross-repo knowledge** | none | learnings scoped `owner/*` apply across the organisation |
-| **Repository access** | `actions/checkout` per run, usually shallow | a persistent bare mirror; a worktree materialises in ~80 ms with full history |
-| **Model** | HTTP across the network | localhost, already warm |
-| **Deduplication** | only what is visible in PR comments | the whole finding history, so a claim is not repeated across PRs |
-| **Tooling** | whatever the runner image has | ripgrep, git, linters installed once |
+```bash
+export REVIEWPASS_API_KEY=...          # any OpenAI-compatible endpoint
+npx @magicpages/reviewpass --base main
+```
 
-The Action still exists — it is now a thin client that posts a job and prints the
-result. Set no `daemon-url` and it runs the pipeline in-job instead, which works
-on hosted runners at the cost of all of the above.
+On a pull request, copy [`examples/review.yml`](examples/review.yml) into
+`.github/workflows/`. It needs `actions/checkout` and `pull-requests: write`;
+there is nothing to host and no account to create.
+
+Reviewing under your own bot, rather than `github-actions[bot]`, takes one
+command — and it is what makes an approval count toward branch protection, since
+GitHub excludes `github-actions[bot]` from required reviews:
+
+```bash
+npx @magicpages/reviewpass init-app --org your-org
+```
+
+That registers a GitHub App you own, on your machine, and prints the two secrets
+the workflow needs. Nothing is shared with anyone, including us.
+
+Configuration is `.reviewpass.yaml` at the repository root; every key is
+optional and annotated in [`.reviewpass.example.yaml`](.reviewpass.example.yaml).
 
 ## How a review works
 
@@ -73,22 +83,6 @@ claims. Two worth knowing about:
 - **Blocking is social.** Human reviewers request changes on a small minority of
   reviews, so `requestChangesAt` defaults to `critical`. A reviewer that blocks
   on every major finding is more obstructive than a colleague, and gets muted.
-
-## Running it
-
-Three ways, one pipeline — as a GitHub Action on a pull request, as a CLI over a
-local git range, or as a skill inside a coding agent. **[docs/running-it.md](docs/running-it.md)**
-has the commands, the workflow file, and what differs between them.
-
-The short version:
-
-```bash
-npx @magicpages/reviewpass --base main        # local changes, nothing posted
-npx @magicpages/reviewpass --repo o/n --pr 42 # a pull request, still nothing posted
-```
-
-Configuration is `.reviewpass.yaml` at the repository root; every key is
-optional and annotated in [`.reviewpass.example.yaml`](.reviewpass.example.yaml).
 
 ## Talking to it
 
@@ -173,6 +167,25 @@ finds *missing* code, so it is a real trade rather than a free saving.
 Running against your own hardware is cheaper per token than a hosted provider
 but slower per review, and the crossover depends entirely on your electricity
 price and how idle the machine otherwise is.
+
+## Optional: a daemon for self-hosted runners
+
+Skip this unless your runners sit on the same machine as your models. Everything
+above works without it.
+
+When they do share a machine, a self-contained Action wastes what that proximity
+buys: it re-clones the repository each run and crosses the network to reach a GPU
+in the next process. `reviewpassd` keeps a bare mirror — a worktree materialises
+in about 80 ms with full history — talks to the model over localhost, and holds a
+SQLite store of learnings that can be scoped `owner/*` across an organisation.
+
+Set `daemon-url` and the Action becomes a thin client that posts a job and prints
+the result. `deploy/install.sh` sets it up.
+
+What you do *not* need it for is memory. Findings, the replies arguing them down,
+and the corrections that follow are all already on the pull request, and are read
+back from GitHub in about a second — so there is no cache to warm, no state
+branch to push, and nothing to lose when a runner is recycled.
 
 ## Layout
 

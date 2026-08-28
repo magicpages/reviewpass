@@ -24,7 +24,11 @@ concurrency:
   # Keyed on the pull request, so a superseded push does not queue behind a
   # stale run. Replies are *not* cancelled in progress: two maintainers
   # answering two findings at once are two conversations, not a race.
-  group: reviewpass-${{ github.event.pull_request.number }}-${{ github.event_name }}
+  # The comment id is part of the key so two maintainers answering two findings
+  # run in parallel. Without it every reply on a pull request shares one group
+  # and queues behind the last, which is the opposite of what the line below
+  # says. Empty for push events, which is what makes them coalesce.
+  group: reviewpass-${{ github.event.pull_request.number }}-${{ github.event_name }}-${{ github.event.comment.id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -45,7 +49,9 @@ jobs:
       # Pinned to a commit: tags are mutable, so `@v4` trusts whoever can move it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: magicpages/reviewpass@v1
+      # Pinned like the checkout above. The reasoning that makes a mutable tag
+      # a risk does not stop applying because the action is your own.
+      - uses: magicpages/reviewpass@af5e5d46b663babec46acd4f7fb7de28489c2cd7 # v1
         with:
           # Posting as your own App makes approvals count toward branch
           # protection; github-actions[bot] approvals never do. Drop these two
