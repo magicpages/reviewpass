@@ -1,7 +1,8 @@
 import { envAny } from './config/index.js';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { resolveIdentity } from './github/auth.js';
+import { resolveIdentity, apiBaseUrl } from './github/auth.js';
+import { parseDirective, helpText } from './github/commands.js';
 import { runReview } from './pipeline.js';
 
 /**
@@ -70,7 +71,7 @@ async function viaDaemon(url: string, token: string, prNumber: number): Promise<
   core.setOutput('event', result.event);
 }
 
-async function standalone(token: string, prNumber: number, selfLogin?: string): Promise<void> {
+async function standalone(token: string, prNumber: number, selfLogin?: string, forceFull = false): Promise<void> {
   const ctx = github.context;
   const profile = core.getInput('profile');
   const outcome = await runReview({
@@ -80,7 +81,7 @@ async function standalone(token: string, prNumber: number, selfLogin?: string): 
     repo: ctx.repo.repo,
     prNumber,
     workspace: core.getInput('workspace') || process.env.GITHUB_WORKSPACE || process.cwd(),
-    fullReview: core.getInput('full-review') === 'true',
+    fullReview: forceFull || core.getInput('full-review') === 'true',
     configOverrides: {
       endpoint: core.getInput('model-endpoint') || undefined,
       name: core.getInput('model') || undefined,
@@ -189,6 +190,58 @@ async function main() {
   if (!prNumber) throw new Error('no pull request in context; pass pr-number');
 
   /**
+   * A command, if the comment is addressed to us by name.
+   *
+   * Checked before the reply branch, which would otherwise swallow it: a thread
+   * reply saying "@reviewpass full review" is an instruction, not a rebuttal to
+   * argue with. The name comes from the identity we post under, so an
+   * installation whose App is `acme-review` answers to `@acme-review` and to
+   * nothing else.
+   */
+  const commentBody = (ctx.payload.comment as { body?: string } | undefined)?.body;
+  const command = commentBody ? parseDirective(commentBody, identity.login) : null;
+
+  if (command) {
+    const say = async (text: string) => {
+      const c = ctx.payload.comment as { id?: number; in_reply_to_id?: number } | undefined;
+      const kit = github.getOctokit(token, { baseUrl: apiBaseUrl() });
+      if (ctx.eventName === 'pull_request_review_comment' && c?.id) {
+        await kit.rest.pulls.createReplyForReviewComment({
+          owner: ctx.repo.owner, repo: ctx.repo.repo, pull_number: prNumber,
+          comment_id: c.in_reply_to_id ?? c.id, body: text,
+        });
+      } else {
+        await kit.rest.issues.createComment({
+          owner: ctx.repo.owner, repo: ctx.repo.repo, issue_number: prNumber, body: text,
+        });
+      }
+    };
+
+    core.info(`Command: ${command.name}`);
+    switch (command.name) {
+      case 'help':
+        await say(helpText(identity.login));
+        return;
+      case 'review':
+      case 'full-review':
+        await standalone(token, prNumber, identity.login, command.name === 'full-review');
+        return;
+      case 'resolve':
+      case 'ignore':
+      case 'resume':
+        // Honest rather than silent: these need state that outlives a job.
+        await say(
+          `\`${command.name}\` needs the daemon, which this installation does not run. ` +
+          `\`review\` and \`full review\` work here.`,
+        );
+        return;
+      default:
+        // `parseDirective` returns nothing else; a reply is handled below.
+        break;
+    }
+  }
+
+  /**
    * A reply is answered, never re-reviewed.
    *
    * This is the failure that produced roughly five hundred comments on one pull
@@ -227,6 +280,31 @@ async function main() {
     });
     core.setOutput('answered', String(out.answered));
     core.setOutput('conceded', String(out.conceded));
+    return;
+  }
+
+  /**
+   * A review runs when something asked for one. Nothing else reaches here.
+   *
+   * The third time this shape has bitten: code that could not identify an event
+   * carried on to the most expensive thing it knows how to do. A comment saying
+   * "Ohh I saw that @reviewpass added a review earlier" mentions the bot, so the
+   * workflow filter admits it; it is not a command and not a reply, and every
+   * earlier version of this function would have answered it with a full review.
+   *
+   * The workflow's `contains()` filter cannot tell an instruction from someone
+   * talking about the reviewer — GitHub expressions have no regular
+   * expressions — so it is deliberately loose and this is where it is decided.
+   * A job that starts and does nothing costs a runner minute. A review nobody
+   * asked for costs a few hundred comments.
+   */
+  const askedForReview =
+    ctx.eventName === 'pull_request' ||
+    ctx.eventName === 'pull_request_target' ||
+    ctx.eventName === 'workflow_dispatch' ||
+    Boolean(core.getInput('pr-number'));
+  if (!askedForReview) {
+    core.info(`Nothing to do for a ${ctx.eventName} that is neither a command nor a reply.`);
     return;
   }
 

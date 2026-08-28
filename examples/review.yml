@@ -19,6 +19,12 @@ on:
   # job ends in seconds, which is cheaper than making people remember a mention.
   pull_request_review_comment:
     types: [created]
+  # Commands: `@reviewpass review`, `@reviewpass full review`, `@reviewpass help`.
+  # The name here must match your App's — an App registered as `acme-review`
+  # answers to `@acme-review` and ignores anything else, so change both this
+  # filter and the one in the job below if yours differs.
+  issue_comment:
+    types: [created]
 
 concurrency:
   # Keyed on the pull request, so a superseded push does not queue behind a
@@ -28,7 +34,7 @@ concurrency:
   # run in parallel. Without it every reply on a pull request shares one group
   # and queues behind the last, which is the opposite of what the line below
   # says. Empty for push events, which is what makes them coalesce.
-  group: reviewpass-${{ github.event.pull_request.number }}-${{ github.event_name }}-${{ github.event.comment.id }}
+  group: reviewpass-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}-${{ github.event.comment.id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -36,7 +42,11 @@ jobs:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'pull_request_review_comment' &&
-       github.event.comment.in_reply_to_id != null)
+       (github.event.comment.in_reply_to_id != null ||
+        contains(github.event.comment.body, '@reviewpass'))) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@reviewpass'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

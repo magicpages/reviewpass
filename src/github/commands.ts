@@ -24,10 +24,22 @@ export interface ParsedCommand {
   argument: string;
 }
 
-// The mention the bot answers to. Configurable because an installation may post
-// under its own account name; the previous name stays accepted so commands on
-// open pull requests keep working.
-const BOT = envAny('MENTION') ?? 'reviewpass';
+/**
+ * The name the bot answers to.
+ *
+ * Derived from the identity it posts under, because that is the name a person
+ * reading the thread will type. An installation that registered its App as
+ * `acme-review` posts as `acme-review[bot]` and answers to `@acme-review`;
+ * nothing here should be hardcoded to the name this project happens to use.
+ *
+ * `REVIEWPASS_MENTION` overrides it, and the default only applies when there is
+ * no identity to derive from — a local run, or the default token.
+ */
+export function mentionName(login?: string): string {
+  const fromLogin = login?.replace(/\[bot\]$/, '').trim();
+  return envAny('MENTION') ?? (fromLogin || 'reviewpass');
+}
+
 const LEGACY_BOT = 'warren';
 
 /**
@@ -35,8 +47,11 @@ const LEGACY_BOT = 'warren';
  * `@reviewpass <text>` which is treated as a correction to learn from. The
  * previous name is still accepted so open pull requests keep working.
  */
-export function parseCommand(body: string): ParsedCommand | null {
-  const mention = new RegExp(`@(?:${BOT}|${LEGACY_BOT})\\b[ \\t]*(.*)`, 'i');
+export function parseCommand(body: string, login?: string): ParsedCommand | null {
+  const bot = mentionName(login);
+  // Escaped: an App slug is user-chosen and may contain regex metacharacters.
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const mention = new RegExp(`@(?:${esc(bot)}|${LEGACY_BOT})\\b[ \\t]*(.*)`, 'i');
   const m = mention.exec(body);
   if (!m) return null;
 
@@ -59,7 +74,9 @@ export function parseCommand(body: string): ParsedCommand | null {
   return rest ? { name: 'agree', argument: rest } : { name: 'help', argument: '' };
 }
 
-export const HELP_TEXT = `**reviewpass commands**
+export function helpText(login?: string): string {
+  const BOT = mentionName(login);
+  return `**${BOT} commands**
 
 | Command | What it does |
 |:---|:---|
@@ -72,6 +89,10 @@ export const HELP_TEXT = `**reviewpass commands**
 Replying to a finding teaches reviewpass. Say why it is wrong and it will not raise
 that finding again in this repository; confirm it and the reasoning is kept for
 similar code.`;
+}
+
+/** The default-name help, for callers with no identity to hand. */
+export const HELP_TEXT = helpText();
 
 /**
  * Turn a maintainer's correction into a durable learning. Kept deliberately
@@ -80,10 +101,48 @@ similar code.`;
 export function learningFromReply(
   reply: string,
   finding: { path: string; title: string },
+  login?: string,
 ): string {
+  const bot = mentionName(login).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const cleaned = reply
-    .replace(new RegExp(`@(?:${BOT}|${LEGACY_BOT})\\b`, 'gi'), '')
+    .replace(new RegExp(`@(?:${bot}|${LEGACY_BOT})\\b`, 'gi'), '')
     .replace(/\s+/g, ' ')
     .trim();
   return `In \`${finding.path}\`: regarding "${finding.title}" — ${cleaned}`;
+}
+
+/**
+ * A command, or nothing. Deliberately stricter than `parseCommand`.
+ *
+ * `parseCommand` treats any text after the mention as a correction to learn
+ * from, which is right when someone is replying to a finding and wrong when
+ * they are talking *about* the reviewer. "Ohh I saw that @reviewpass added a
+ * review earlier" ends with a mention followed by prose, and prose fell through
+ * to a branch that kept going and ran a full re-review.
+ *
+ * So an instruction has to look like one:
+ *
+ *   - the mention starts the comment, or starts a line within it. A mention in
+ *     the middle of a sentence is someone talking about the bot, not to it.
+ *   - the first word after it is a command. Not "probably a command" - one of
+ *     these words, and nothing else is entertained.
+ *
+ * Everything else returns null and the caller moves on. The cost of being wrong
+ * here is a review nobody asked for, so the bar is the strict one.
+ */
+export function parseDirective(body: string, login?: string): ParsedCommand | null {
+  const bot = mentionName(login).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const line = new RegExp(`^[ \\t]*@(?:${bot}|${LEGACY_BOT})\\b[ \\t]*(.*)$`, 'im');
+  const m = line.exec(body);
+  if (!m) return null;
+
+  const rest = (m[1] ?? '').trim().toLowerCase();
+  if (/^full[\s-]?review\b/.test(rest)) return { name: 'full-review', argument: '' };
+  if (/^re-?review\b/.test(rest)) return { name: 'review', argument: '' };
+  if (/^review\b/.test(rest)) return { name: 'review', argument: '' };
+  if (/^resolve\b/.test(rest)) return { name: 'resolve', argument: '' };
+  if (/^(ignore|pause|stop)\b/.test(rest)) return { name: 'ignore', argument: '' };
+  if (/^resume\b/.test(rest)) return { name: 'resume', argument: '' };
+  if (/^(help|\?)$/.test(rest) || /^help\b/.test(rest)) return { name: 'help', argument: '' };
+  return null;
 }
