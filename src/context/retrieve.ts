@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { parseJsonc } from './jsonc.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { searchRepo, findByName, renderMatches, searchBackend } from './search.js';
@@ -209,7 +210,7 @@ function resolveImport(root: string, from: string, spec: string): string | null 
 const aliasCache = new Map<string, string[]>();
 
 /** Directories an `@/` alias could point at, nearest package first. */
-function tsconfigAliasBase(root: string, from: string): string[] {
+export function tsconfigAliasBase(root: string, from: string): string[] {
   const pkgDir = nearestPackageDir(root, from);
   const cached = aliasCache.get(pkgDir);
   if (cached) return cached;
@@ -218,14 +219,14 @@ function tsconfigAliasBase(root: string, from: string): string[] {
   const tsconfig = join(root, pkgDir, 'tsconfig.json');
   if (existsSync(tsconfig)) {
     try {
-      // tsconfig allows comments and trailing commas; strip the obvious ones.
-      const raw = readFileSync(tsconfig, 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:])\/\/.*$/gm, '$1')
-        .replace(/,(\s*[}\]])/g, '$1');
-      const cfg = JSON.parse(raw) as {
+      // Parsed with a scanner rather than a regex: a path alias like `@/lib/*`
+      // contains a slash then an asterisk, so regex comment-stripping treated
+      // it as the start of a block comment and destroyed the file. Every alias
+      // in this repository was being silently discarded.
+      const cfg = parseJsonc<{
         compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
-      };
+      }>(readFileSync(tsconfig, 'utf8'));
+      if (!cfg) throw new Error('unparseable tsconfig');
       const baseUrl = cfg.compilerOptions?.baseUrl ?? '.';
       for (const targets of Object.values(cfg.compilerOptions?.paths ?? {})) {
         for (const t of targets) {

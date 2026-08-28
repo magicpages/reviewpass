@@ -101,6 +101,8 @@ export interface ReviewUnit {
    * the strength of a run that never happened.
    */
   toolsRan?: boolean;
+  /** Whether the compiler is enforcing the types this file declares. */
+  strictness?: { strictNullChecks: boolean; noUncheckedIndexedAccess: boolean };
 }
 
 export interface PreMergeCheck {

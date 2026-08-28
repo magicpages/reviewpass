@@ -1,7 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { parseJsonc } from './jsonc.js';
 import { promisify } from 'node:util';
 import { existsSync, symlinkSync, readFileSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import type { ReviewpassConfig } from '../config/index.js';
 
 const exec = promisify(execFile);
@@ -225,4 +226,72 @@ export function toolFindingsFor(findings: ToolFinding[], path: string): string[]
     .filter((f) => f.path === path || f.path.endsWith(`/${path}`))
     .slice(0, 40)
     .map((f) => `${f.severity} ${f.rule} at line ${f.line}: ${f.message}`);
+}
+
+/**
+ * Whether the project's types can be trusted to exclude null and undefined.
+ *
+ * This decides whether a whole class of finding is worth anything. "Guard
+ * against `x` being undefined" is a real defect when the compiler is not
+ * enforcing it and dead code when it is — eight such findings on one pull
+ * request were declined with the same sentence, that the value is typed
+ * non-optional and comes from the repository's own constants. Writing the guard
+ * anyway produces code `@typescript-eslint/no-unnecessary-condition` then flags.
+ *
+ * Without `strictNullChecks` TypeScript erases null and undefined from types
+ * entirely, so a non-optional annotation proves nothing and the same finding
+ * becomes legitimate. The verifier cannot see a tsconfig, so it is read here.
+ *
+ * `noUncheckedIndexedAccess` is reported separately and deliberately not folded
+ * in: it is the exception rather than a strengthening. Array elements and index
+ * signatures are possibly-undefined at runtime whatever the annotation says,
+ * which is precisely the documented false positive of the lint rule above.
+ */
+export interface TypeStrictness {
+  strictNullChecks: boolean;
+  noUncheckedIndexedAccess: boolean;
+}
+
+export function typeStrictness(root: string, forPath?: string): TypeStrictness {
+  const seen = new Set<string>();
+
+  const read = (file: string, depth = 0): TypeStrictness | undefined => {
+    if (depth > 5 || seen.has(file) || !existsSync(file)) return undefined;
+    seen.add(file);
+    try {
+      const cfg = parseJsonc<{
+        extends?: string;
+        compilerOptions?: { strict?: boolean; strictNullChecks?: boolean; noUncheckedIndexedAccess?: boolean };
+      }>(readFileSync(file, 'utf8'));
+      if (!cfg) return undefined;
+      const o = cfg.compilerOptions ?? {};
+      // A local `false` beats an inherited `true`, so only fall through to the
+      // base config for options this file does not mention at all.
+      const inherited = cfg.extends && !cfg.extends.startsWith('@')
+        ? read(resolve(dirname(file), cfg.extends.endsWith('.json') ? cfg.extends : `${cfg.extends}.json`), depth + 1)
+        : undefined;
+      return {
+        strictNullChecks: o.strictNullChecks ?? o.strict ?? inherited?.strictNullChecks ?? false,
+        noUncheckedIndexedAccess: o.noUncheckedIndexedAccess ?? inherited?.noUncheckedIndexedAccess ?? false,
+      };
+    } catch {
+      return undefined;
+    }
+  };
+
+  // The nearest tsconfig to the file under review, then the repository root.
+  const candidates: string[] = [];
+  if (forPath) {
+    const parts = forPath.split('/');
+    for (let i = parts.length - 1; i > 0; i--) {
+      candidates.push(join(root, parts.slice(0, i).join('/'), 'tsconfig.json'));
+    }
+  }
+  candidates.push(join(root, 'tsconfig.json'));
+
+  for (const c of candidates) {
+    const found = read(c);
+    if (found) return found;
+  }
+  return { strictNullChecks: false, noUncheckedIndexedAccess: false };
 }

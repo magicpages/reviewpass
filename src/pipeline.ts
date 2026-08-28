@@ -8,7 +8,7 @@ import { selectFiles, groupFiles } from './context/select.js';
 import { mineInstructions, rulesFor } from './context/instructions.js';
 import { gatherContext, describeBackend, contextBudgetFor, filesNamedIn } from './context/retrieve.js';
 import { buildIndex, listSourceFiles } from './graph/index.js';
-import { runTools, toolFindingsFor } from './context/tools.js';
+import { runTools, toolFindingsFor , typeStrictness } from './context/tools.js';
 import { scopesFor, type RecordedFinding } from './store/common.js';
 import { FileLearningStore } from './store/file-learnings.js';
 import { deriveMemory } from './store/derive.js';
@@ -374,6 +374,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       ],
       toolFindings: toolFindingsFor(toolFindings ?? [], file.path),
       toolsRan,
+      strictness: typeStrictness(workspace, file.path),
     };
   });
   log.info(`Search backend: ${await describeBackend(workspace)}`);

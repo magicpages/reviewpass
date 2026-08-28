@@ -304,6 +304,18 @@ because the shape recurs and the example is what makes it recognisable.
   This is narrow. It covers *existence* only. How something that does exist
   behaves — a deprecation, a known vulnerability, an API that is easy to hold
   wrong — is still a finding, and still worth making.
+- **A guard against a value the types already exclude.** "Handle the case where
+  \`x\` is undefined" is a defect when nothing enforces the type and dead code
+  when something does. Check where the value comes from: a constant in this
+  repository, this service's own earlier write, or an authenticated session is
+  not user input, and asking to guard it produces a branch that can never run
+  and that the project's own linter would then flag. Eight such findings on one
+  pull request were declined with the same sentence.
+
+  Uphold it when the value genuinely crosses a trust boundary, or when it is an
+  array element or an index-signature lookup — those are possibly-undefined
+  whatever the annotation says. Validation belongs at the boundary; re-checking
+  behind it is the thing this rule is about.
 - **An option the file already sets** — where a finding asks for one concrete
   option, flag or key to be added, that is decidable by looking for it, and it
   is often already there a few lines away with a comment saying why. One asked
@@ -397,6 +409,30 @@ and one sentence of evidence in \`reason\`.`;
  */
 function conventions(unit: ReviewUnit): string[] {
   const parts: string[] = [];
+  // Only stated when the compiler is actually enforcing it. Without
+  // `strictNullChecks` TypeScript erases null and undefined from every type, so
+  // a non-optional annotation proves nothing and a guard against undefined is a
+  // legitimate finding rather than dead code.
+  if (unit.strictness?.strictNullChecks) {
+    parts.push(
+      '\n# What the compiler already guarantees here\n',
+      'This project has `strictNullChecks` on and type checks clean, so a value',
+      'whose declared type does not include `null` or `undefined` cannot be',
+      'either. A guard against it is unreachable code, and the lint rule',
+      '`@typescript-eslint/no-unnecessary-condition` exists to flag exactly that.',
+      '',
+      'Two exceptions, both real:',
+      '- values crossing a trust boundary — a request body, an external API',
+      '  response, `JSON.parse`, `process.env`, an unvalidated database read.',
+      '  The annotation there is a claim, not a guarantee.',
+      unit.strictness.noUncheckedIndexedAccess
+        ? '- array elements and index-signature lookups, which this project already types as possibly-undefined.'
+        : '- array elements and index-signature lookups. TypeScript optimistically types these as defined and they are not; `noUncheckedIndexedAccess` is off here.',
+      '',
+      'A `Record<K, V>` whose `K` is a finite union of literals is *not* an index',
+      'signature: every key exists, and indexing it with a `K` cannot be undefined.',
+    );
+  }
   if (unit.instructions.length) {
     parts.push(
       '\n# Repository rules\n',
