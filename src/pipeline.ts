@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { loadConfig, envAny, type ReviewpassConfig } from './config/index.js';
 import { ModelClient } from './model/client.js';
 import { blockerFor } from './model/blocked.js';
@@ -232,6 +233,35 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   const pr = await gh.loadPullRequest(
     prNumber, cfg.review.incremental && !opts.fullReview, opts.atSha,
   );
+  /**
+   * The workspace has to be the code being reviewed.
+   *
+   * `runRespond` refuses outright on a mismatch; a review only warns, because a
+   * local run against uncommitted work is a legitimate use and the diff itself
+   * always comes from the pull request. What comes from the workspace is the
+   * surrounding context — the whole file, its neighbours, the symbol graph — so
+   * a stale checkout produces findings reasoned from code the author did not
+   * write, which read as confident and are wrong.
+   *
+   * Caught by the reviewer itself on a workflow of mine: an `issue_comment`
+   * carries no `pull_request` object, `github.ref` falls back to the default
+   * branch, and the job would have reviewed `main` while reporting against the
+   * pull request.
+   */
+  if (pr.headSha && !opts.atSha) {
+    try {
+      const head = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (head !== pr.headSha) {
+        log.warn(
+          `Workspace is at ${head.slice(0, 8)} but the pull request head is ` +
+          `${pr.headSha.slice(0, 8)}. Context will be read from the wrong code.`,
+        );
+      }
+    } catch { /* not a git checkout; nothing to compare against */ }
+  }
+
   const prior = await gh.loadExistingReview(prNumber);
 
   log.info(
