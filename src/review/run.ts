@@ -748,3 +748,74 @@ export async function runChecks(
     return [];
   }
 }
+
+/**
+ * How much two findings are making the same claim.
+ *
+ * The same comparison `collapseNearDuplicates` uses, exposed so a claim can be
+ * matched against one that verification already disproved. Literal-stripped,
+ * because the same argument about the same defect gets written with different
+ * identifiers depending on which file it was anchored to.
+ */
+export function claimOverlap(
+  a: { title: string; body: string },
+  b: { title: string; body: string },
+): number {
+  const stem = (w: string) => w.replace(/(ingly|edly|ing|ed|es|s)$/, '').replace(/(.)\1$/, '$1');
+  const words = (t: string) => new Set(
+    t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+      .filter((w) => w.length > 3).map(stem).filter((w) => w.length > 2),
+  );
+  const overlap = (x: Set<string>, y: Set<string>) => {
+    if (!x.size || !y.size) return 0;
+    let n = 0;
+    for (const w of x) if (y.has(w)) n++;
+    return n / Math.min(x.size, y.size);
+  };
+  const claim = (f: { title: string; body: string }) => `${f.title} ${firstSentence(f.body)}`;
+  return Math.max(
+    overlap(words(a.title), words(b.title)),
+    overlap(words(stripLiterals(claim(a))), words(stripLiterals(claim(b)))),
+  );
+}
+
+/**
+ * Do not post a finding that verification disproved somewhere else.
+ *
+ * Verification groups findings by region, so a claim raised against three files
+ * is judged three times against three sets of evidence — and only the group
+ * holding the call site gets the evidence that settles it. On a pull request
+ * that made a schema field required, one instance was refuted because the write
+ * path only ever handles a freshly created record, and three instances of the
+ * same claim were upheld elsewhere. One escalated to critical and blocked the
+ * pull request on a claim the reviewer had already disproved in the same run.
+ *
+ * Only `incorrect` refutations propagate. A `duplicate` refutation is not a
+ * disproof — it means the claim is true and is being reported once, through the
+ * finding that survived — so treating it as one would delete the survivor too.
+ * An `out of scope` refutation is about *this* change and can be right in one
+ * file and wrong in another, so it does not travel either.
+ */
+export function reconcileWithRefutations(
+  kept: Finding[],
+  refuted: Finding[],
+  log: (m: string) => void = () => {},
+): { kept: Finding[]; overturned: Finding[] } {
+  const disproved = refuted.filter((f) => /^incorrect\b/i.test(f.verdictReason ?? ''));
+  if (!disproved.length) return { kept, overturned: [] };
+
+  const overturned: Finding[] = [];
+  const survivors = kept.filter((f) => {
+    // Calibrated on the run this exists to fix: the two restatements of the
+    // disproved claim scored 0.57 and 0.50, while the closest pair that must
+    // survive - a rule violation the maintainer went on to fix - scored 0.42.
+    // That pair is also a `duplicate` rather than `incorrect`, so it is out of
+    // this set already; the margin is the second line of defence, not the first.
+    const match = disproved.find((d) => claimOverlap(f, d) >= 0.5);
+    if (!match) return true;
+    log(`  dropped "${f.title.slice(0, 62)}" — disproved on ${match.path}`);
+    overturned.push({ ...f, verdict: 'refuted', verdictReason: match.verdictReason });
+    return false;
+  });
+  return { kept: survivors, overturned };
+}

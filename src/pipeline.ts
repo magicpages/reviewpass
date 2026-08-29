@@ -21,8 +21,7 @@ import { symbolsInPatch } from './context/retrieve.js';
 import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
   collapseNearDuplicates, capPerRegion, citesMissingArtifact,
-  groupByRegion, verifyGroup,
-} from './review/run.js';
+  groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
 
@@ -479,6 +478,17 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     // here rather than by the verifier, because gating on importance cost 63%
     // of the defects this team really fixed when it was tried.
     kept = verified.filter((f) => f.verdict !== 'refuted' && (f.importance ?? 5) > cfg.review.minImportance);
+
+    // A claim disproved in one region is disproved everywhere. Verification
+    // judges each region against its own evidence, so the same claim raised
+    // against three files is decided three times and only the group holding
+    // the call site sees what settles it.
+    const reconciled = reconcileWithRefutations(kept, refuted, (m) => log.info(m));
+    if (reconciled.overturned.length) {
+      log.info(`Dropped ${reconciled.overturned.length} finding(s) disproved elsewhere in this review`);
+      refuted.push(...reconciled.overturned);
+      kept = reconciled.kept;
+    }
     log.info(`Verification kept ${kept.length} of ${grounded.length}`);
   }
 
