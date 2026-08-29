@@ -31,6 +31,12 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+      # The example workflow is code that only GitHub can run, and it fails at
+      # dispatch rather than at review time. A missing parenthesis in it shipped
+      # to a live repository and silently disabled a whole trigger.
+      - name: Check the workflow conditions
+        run: node scripts/check-workflow.mjs examples/review.yml .github/workflows/ci.yml
+
       # The committed bundle is what actually runs when somebody writes
       # `uses: magicpages/reviewpass@v1`, and it is 4 MB of minified code that
       # no reviewer reads. Rebuilding it here and failing on a difference is

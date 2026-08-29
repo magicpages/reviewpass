@@ -20,6 +20,10 @@ on:
   pull_request_review_comment:
     types: [created]
   # Commands: `@reviewpass review`, `@reviewpass full review`, `@reviewpass help`.
+  # Set the REVIEWPASS_MENTION repository variable to your App's name, without a
+  # leading `@`, if it is not `reviewpass`. Do not reach for `lowercase()` or
+  # `replace()` — expressions have neither, and `contains()` already ignores
+  # case, because GitHub ignores case when comparing strings.
   # The name here must match your App's — an App registered as `acme-review`
   # answers to `@acme-review` and ignores anything else, so change both this
   # filter and the one in the job below if yours differs.
@@ -40,13 +44,13 @@ concurrency:
 jobs:
   review:
     if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'pull_request_review_comment' &&
-       (github.event.comment.in_reply_to_id != null ||
-        contains(github.event.comment.body, '@reviewpass'))) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@reviewpass'))
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || (github.event_name == 'pull_request_review_comment'
+          && (github.event.comment.in_reply_to_id != null
+              || contains(github.event.comment.body, format('@{0}', vars.REVIEWPASS_MENTION || 'reviewpass'))))
+      || (github.event_name == 'issue_comment'
+          && github.event.issue.pull_request != null
+          && contains(github.event.comment.body, format('@{0}', vars.REVIEWPASS_MENTION || 'reviewpass')))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
