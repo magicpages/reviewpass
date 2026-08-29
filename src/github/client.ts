@@ -362,6 +362,23 @@ export class GitHubClient {
     }
   }
 
+  /**
+   * The id of our own top-level comment, when one exists.
+   *
+   * So a caller that did not load the prior review — an error handler, say —
+   * can still replace the note it left rather than posting a second one.
+   */
+  async findWalkthroughId(number: number): Promise<number | undefined> {
+    try {
+      const { data } = await this.kit.rest.issues.listComments({
+        owner: this.owner, repo: this.repo, issue_number: number, per_page: 100,
+      });
+      return data.find((c) => isWalkthroughComment(c.body ?? ''))?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   async upsertWalkthrough(number: number, body: string, existingId?: number): Promise<void> {
     if (existingId) {
       await this.kit.rest.issues.updateComment({

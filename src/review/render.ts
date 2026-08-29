@@ -130,3 +130,39 @@ function escapeCell(s: string): string {
 }
 
 const short = (sha: string) => sha.slice(0, 7);
+
+/**
+ * The note that says a review is under way, or why one is not.
+ *
+ * Posted before the work starts and overwritten by the walkthrough when it
+ * finishes, so it occupies one comment rather than accumulating. Other
+ * reviewers do the same, and the reason is the same: a review takes ten minutes
+ * or more, and without a sign of life the only thing distinguishing "thinking"
+ * from "broken" is whether you happen to check the Actions tab.
+ *
+ * It carries the walkthrough marker deliberately. That is what lets the finished
+ * review replace it in place, and what stops a second run posting a second one.
+ */
+export function renderProgressNotice(
+  pr: { headSha: string },
+  state:
+    | { kind: 'started'; files: number; incremental: boolean }
+    | { kind: 'blocked'; message: string }
+    | { kind: 'nothing'; reason: string },
+): string {
+  const head = `${WALKTHROUGH_MARKER}\n<!-- reviewpass:sha:${pr.headSha} -->\n`;
+  if (state.kind === 'blocked') {
+    return `${head}\n> [!WARNING]\n> ${state.message} Nothing here reflects on the change.`;
+  }
+  if (state.kind === 'nothing') {
+    return `${head}\n> [!NOTE]\n> Not reviewing this one — ${state.reason}`;
+  }
+  const what = state.incremental ? 'the commits added since the last review' : 'this pull request';
+  return [
+    head,
+    '> [!NOTE]',
+    `> Reviewing ${what} — ${state.files} file${state.files === 1 ? '' : 's'}.`,
+    '> Every finding is checked against the code before it is posted, so this takes',
+    '> a few minutes. This note is replaced by the review when it lands.',
+  ].join('\n');
+}

@@ -22,7 +22,7 @@ import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
   collapseNearDuplicates, capPerRegion, citesMissingArtifact,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
-import { renderWalkthrough, renderReviewSummary } from './review/render.js';
+import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
 
 export interface Logger {
@@ -271,6 +271,30 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   // ── select ────────────────────────────────────────────────────────────────
   const { selected, skipped } = selectFiles(pr.files, cfg.pathFilters);
   log.info(`Selected ${selected.length} files, skipped ${skipped.length}`);
+
+  /**
+   * Say that a review has started, before spending ten minutes on it.
+   *
+   * Without this the only thing separating "thinking" from "broken" is whether
+   * somebody thinks to open the Actions tab. It claims the walkthrough comment,
+   * so the finished review overwrites it rather than adding a second one.
+   *
+   * Best-effort throughout: failing to announce a review is not a reason to
+   * skip it.
+   */
+  if (!opts.dryRun && cfg.review.postWalkthrough) {
+    try {
+      await gh.upsertWalkthrough(
+        prNumber,
+        renderProgressNotice(pr, selected.length
+          ? { kind: 'started', files: selected.length, incremental: pr.isIncremental === true }
+          : { kind: 'nothing', reason: 'nothing in this update is a file it reviews.' }),
+        prior.walkthroughCommentId,
+      );
+    } catch (err) {
+      log.warn(`could not post the progress note: ${String(err).slice(0, 120)}`);
+    }
+  }
 
   if (!selected.length) {
     const empty: ReviewResult = {
@@ -560,7 +584,13 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     }
     ({ posted } = await gh.submitReview(prNumber, pr.headSha, plan, body, event));
     if (cfg.review.postWalkthrough) {
-      await gh.upsertWalkthrough(prNumber, walkthrough, prior.walkthroughCommentId);
+      // A blocked run has no walkthrough worth posting — the model never ran —
+      // so the note says why instead of being replaced by an empty summary.
+      await gh.upsertWalkthrough(
+        prNumber,
+        blocked ? renderProgressNotice(pr, { kind: 'blocked', message: blocked.message }) : walkthrough,
+        prior.walkthroughCommentId,
+      );
     }
     const stillOpen = new Set(findings.map((f) => f.fingerprint!));
     const gone = new Set([...prior.fingerprints].filter((fp) => !stillOpen.has(fp)));

@@ -74,21 +74,45 @@ async function viaDaemon(url: string, token: string, prNumber: number): Promise<
 async function standalone(token: string, prNumber: number, selfLogin?: string, forceFull = false): Promise<void> {
   const ctx = github.context;
   const profile = core.getInput('profile');
-  const outcome = await runReview({
-    token,
-    selfLogin,
-    owner: ctx.repo.owner,
-    repo: ctx.repo.repo,
-    prNumber,
-    workspace: core.getInput('workspace') || process.env.GITHUB_WORKSPACE || process.cwd(),
-    fullReview: forceFull || core.getInput('full-review') === 'true',
-    configOverrides: {
-      endpoint: core.getInput('model-endpoint') || undefined,
-      name: core.getInput('model') || undefined,
-      profile: profile === 'chill' || profile === 'assertive' ? profile : undefined,
-    },
-    log: { info: (m) => core.info(m), warn: (m) => core.warning(m) },
-  });
+  // A crash must not leave the progress note saying a review is under way.
+  // That note is the only thing on the pull request while the job runs, so a
+  // stale one is a status that lies — the same failure as reporting "Nothing to
+  // raise" for a review that never ran.
+  const onCrash = async (err: unknown) => {
+    try {
+      const { GitHubClient } = await import('./github/client.js');
+      const { renderProgressNotice } = await import('./review/render.js');
+      const gh = new GitHubClient(token, ctx.repo.owner, ctx.repo.repo, selfLogin);
+      const id = await gh.findWalkthroughId(prNumber);
+      if (!id) return;
+      await gh.upsertWalkthrough(prNumber, renderProgressNotice({ headSha: '' }, {
+        kind: 'blocked',
+        message: `The review did not finish: ${String(err).slice(0, 200)}`,
+      }), id);
+    } catch { /* the job already failed; do not fail it differently */ }
+  };
+
+  let outcome: Awaited<ReturnType<typeof runReview>>;
+  try {
+    outcome = await runReview({
+      token,
+      selfLogin,
+      owner: ctx.repo.owner,
+      repo: ctx.repo.repo,
+      prNumber,
+      workspace: core.getInput('workspace') || process.env.GITHUB_WORKSPACE || process.cwd(),
+      fullReview: forceFull || core.getInput('full-review') === 'true',
+      configOverrides: {
+        endpoint: core.getInput('model-endpoint') || undefined,
+        name: core.getInput('model') || undefined,
+        profile: profile === 'chill' || profile === 'assertive' ? profile : undefined,
+      },
+      log: { info: (m) => core.info(m), warn: (m) => core.warning(m) },
+    });
+  } catch (err) {
+    await onCrash(err);
+    throw err;
+  }
 
   core.info(
     `Done: ${outcome.posted} inline, ${outcome.plan.unanchored.length} in summary, ` +
