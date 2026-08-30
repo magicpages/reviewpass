@@ -1,5 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import * as github from '@actions/github';
 import { apiBaseUrl } from './auth.js';
+import { envAny } from '../config/index.js';
 import type { ChangedFile, Finding, PullRequestContext } from '../types.js';
 import { addedLineNumbers } from '../context/select.js';
 
@@ -66,6 +68,10 @@ export class GitHubClient {
   /** The login we post as, when known, so we can recognise our own comments. */
   readonly selfLogin?: string;
 
+  /** Where a configurable intent command looks for a ticket key. */
+  private lastTitle = '';
+  private lastBranch = '';
+
   constructor(token: string, private owner: string, private repo: string, selfLogin?: string) {
     // `baseUrl` rather than the default, so this runs against GitHub Enterprise
     // Server. Nothing read `GITHUB_API_URL` before, which made the tool unusable
@@ -99,6 +105,10 @@ export class GitHubClient {
         : files.map((f) => this.toChangedFile(f));
     const head = atSha ?? pr.head.sha;
 
+    const issues = linkedIssueNumbers(`${pr.title}\n${pr.body ?? ''}`);
+    this.lastTitle = pr.title;
+    this.lastBranch = pr.head.ref;
+
     return {
       owner: this.owner,
       repo: this.repo,
@@ -113,8 +123,65 @@ export class GitHubClient {
       reviewedFrom: useIncremental ? prior.lastReviewedSha! : pr.base.sha,
       reviewedTo: head,
       isIncremental: useIncremental,
-      linkedIssues: linkedIssueNumbers(`${pr.title}\n${pr.body ?? ''}`),
+      linkedIssues: issues,
+      intent: await this.readIntent(issues),
     };
+  }
+
+  /**
+   * What the linked issues say, and whatever else the adopter can fetch.
+   *
+   * Issues first, because they cost nothing and need no configuration: a change
+   * that says "closes #123" has already named where its requirements live, and
+   * the reviewer otherwise judges the code only against itself.
+   *
+   * `REVIEWPASS_INTENT_COMMAND` covers the rest. Teams keep requirements in
+   * trackers this tool has never heard of, and hardcoding any of them would be
+   * both wrong and unhelpful to everyone else — so the adopter supplies a
+   * command, it is run once per key found in the title and branch, and whatever
+   * it prints is handed to the reviewer verbatim. Nothing here knows what a
+   * ticket key looks like beyond a configurable pattern.
+   */
+  private async readIntent(
+    issues: number[],
+  ): Promise<{ source: string; title: string; body: string }[]> {
+    const out: { source: string; title: string; body: string }[] = [];
+
+    for (const number of issues.slice(0, 3)) {
+      try {
+        const { data } = await this.kit.rest.issues.get({
+          owner: this.owner, repo: this.repo, issue_number: number,
+        });
+        // A pull request is an issue to this endpoint; its body is the PR
+        // description the reviewer already has.
+        if (data.pull_request) continue;
+        out.push({ source: `#${number}`, title: data.title, body: data.body ?? '' });
+      } catch {
+        // Private, deleted, or in another repository. Intent is a bonus.
+      }
+    }
+
+    const command = envAny('INTENT_COMMAND');
+    if (command) {
+      // The pattern is configurable because a ticket key is a convention, not a
+      // standard: every team has its own prefix and its own shape.
+      const pattern = new RegExp(envAny('INTENT_PATTERN') ?? '[A-Z][A-Z0-9]+-\\d+', 'g');
+      const keys = [...new Set(`${this.lastTitle} ${this.lastBranch}`.match(pattern) ?? [])].slice(0, 2);
+      for (const key of keys) {
+        try {
+          const text = execFileSync('sh', ['-c', command], {
+            encoding: 'utf8',
+            env: { ...process.env, REVIEWPASS_TICKET: key },
+            timeout: 30_000,
+            maxBuffer: 1e7,
+          }).trim();
+          if (text) out.push({ source: key, title: key, body: text.slice(0, 8_000) });
+        } catch {
+          // A tracker that cannot be reached is not a reason to skip the review.
+        }
+      }
+    }
+    return out;
   }
 
   private toChangedFile(f: {

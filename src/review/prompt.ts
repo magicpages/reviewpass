@@ -172,6 +172,20 @@ export function buildFindingPrompt(pr: PullRequestContext, unit: ReviewUnit): st
   parts.push(`# Pull request #${pr.number}: ${pr.title}`);
   if (pr.body.trim()) parts.push(`\n${truncate(pr.body, 1500)}`);
 
+  // What was asked for, as opposed to what was written. Without it a review can
+  // only check the change against itself, and code that is wrong in exactly the
+  // way it documents reads as correct. A requirement met by different means is
+  // still met - this is not a checklist to tick, it is what "in scope" means.
+  if (pr.intent?.length) {
+    parts.push(
+      '\n# What this change was asked to do\n',
+      'From the issues this pull request names. Where the code and this disagree,',
+      'that is a finding; where the code satisfies this differently than described,',
+      'it is not.\n',
+      ...pr.intent.map((i) => `## ${i.source}: ${i.title}\n\n${truncate(i.body, 4_000)}`),
+    );
+  }
+
   parts.push(`\n# File under review\n\n\`${unit.path}\``);
 
   if (unit.instructions.length) {

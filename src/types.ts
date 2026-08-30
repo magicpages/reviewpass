@@ -70,6 +70,15 @@ export interface PullRequestContext {
   reviewedTo: string;
   isIncremental: boolean;
   linkedIssues: number[];
+  /**
+   * What the linked issues say, when they are readable.
+   *
+   * The strongest statement of intent a change usually has, and the one thing
+   * that separates "this code is self-consistent" from "this code does what was
+   * asked". A review that never reads it can only check the change against
+   * itself.
+   */
+  intent?: { source: string; title: string; body: string }[];
 }
 
 export interface ReviewUnit {

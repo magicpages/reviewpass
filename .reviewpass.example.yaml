@@ -114,3 +114,16 @@ learnings:
   # reply that should not have to be restated.
   enabled: true
   dbPath: .reviewpass/learnings.json
+
+# Where a change's requirements live, when they are not in the pull request.
+#
+# Issues the pull request names ("closes #123") are read automatically and need
+# nothing here. For a tracker outside GitHub, give a command: it is run once per
+# ticket key found in the title or branch, with the key in $REVIEWPASS_TICKET,
+# and whatever it prints is handed to the reviewer as the stated intent.
+#
+#   REVIEWPASS_INTENT_COMMAND: 'jira issue view "$REVIEWPASS_TICKET" --plain'
+#   REVIEWPASS_INTENT_PATTERN: '[A-Z][A-Z0-9]+-\d+'
+#
+# Both are environment variables rather than keys here, because the command is
+# a local capability rather than a property of the repository.
