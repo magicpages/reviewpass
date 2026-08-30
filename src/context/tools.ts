@@ -140,32 +140,71 @@ async function runCustom(root: string, cmd: string): Promise<ToolFinding[]> {
  * Linking the primary checkout's dependencies costs nothing and needs no
  * install. The versions match because the worktree shares the repository.
  */
-function linkDependencies(root: string): boolean {
-  if (existsSync(join(root, 'node_modules'))) return true;
+/**
+ * Borrow installed dependencies from the checkout this worktree came from.
+ *
+ * The early version required `node_modules` at the repository root and gave up
+ * otherwise, so a repository whose application lives in a subdirectory — the
+ * common `application/`, `apps/`, `packages/` shape — got no static analysis at
+ * all, even with dependencies installed. Two reviews of such a repository ran
+ * with no type checking and never said why beyond "none to link".
+ *
+ * So: find every install in the source checkout and mirror it at the same
+ * relative path. Anything linked counts, because a monorepo that type checks
+ * per package needs the package's own tree more than the root's.
+ */
+export function linkDependencies(root: string): boolean {
   let main: string;
   try {
     const common = execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
       { encoding: 'utf8' }).trim();
     main = dirname(common);                       // .../repo/.git -> .../repo
   } catch {
-    return false;
+    // Not a worktree: whatever is here is all there is.
+    return existsSync(join(root, 'node_modules'));
   }
-  if (!existsSync(join(main, 'node_modules'))) return false;
+  if (main === root) return existsSync(join(root, 'node_modules'));
 
+  let linked = existsSync(join(root, 'node_modules'));
+  const link = (rel: string) => {
+    const from = join(main, rel);
+    const to = join(root, rel);
+    if (!existsSync(from)) return;
+    // Already linked by an earlier run over the same worktree. That is success,
+    // not a reason to skip: treating it as "nothing linked" made the whole of
+    // static analysis sit out every run after the first.
+    if (existsSync(to)) { linked = true; return; }
+    try {
+      symlinkSync(from, to, 'dir');
+      linked = true;
+    } catch { /* best effort: one package failing must not lose the rest */ }
+  };
+
+  link('node_modules');
+  for (const pkg of listWorkspaceDirs(root)) link(join(pkg, 'node_modules'));
+  // Workspace globs are declared by the package that owns them, which a
+  // repository with no root `package.json` never exposes. Look for the installs
+  // directly, shallowly, and skip anything already inside a `node_modules`.
+  for (const dir of findInstalls(main, 3)) link(dir);
+  return linked;
+}
+
+/** Relative paths of `node_modules` directories, to a bounded depth. */
+function findInstalls(base: string, depth: number, rel = ''): string[] {
+  if (depth <= 0) return [];
+  const out: string[] = [];
+  let entries: { name: string; isDirectory(): boolean }[];
   try {
-    symlinkSync(join(main, 'node_modules'), join(root, 'node_modules'), 'dir');
-    // Workspace packages keep their own trees; link whichever exist.
-    for (const pkg of listWorkspaceDirs(root)) {
-      const from = join(main, pkg, 'node_modules');
-      const to = join(root, pkg, 'node_modules');
-      if (existsSync(from) && !existsSync(to)) {
-        try { symlinkSync(from, to, 'dir'); } catch { /* best effort */ }
-      }
-    }
-    return true;
+    entries = readdirSync(join(base, rel), { withFileTypes: true });
   } catch {
-    return false;
+    return out;
   }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    if (e.name === 'node_modules') { out.push(join(rel, e.name)); continue; }
+    out.push(...findInstalls(base, depth - 1, join(rel, e.name)));
+  }
+  return out;
 }
 
 /**
