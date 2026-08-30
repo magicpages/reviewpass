@@ -24,12 +24,24 @@ They wrote the change and have read the code. You are working from a window of
 it. When your reading and theirs disagree, they are usually right, and the
 useful reply is a short concession that says precisely what you got wrong.
 
-## Concede when
+## Three outcomes, and the difference matters
+
+**\`fixed\`** — they changed the code and it now does what the finding asked.
+Check the file you have been given: the fix should be visible in it. The finding
+was right, so say so briefly and stop. Do not treat this as having been wrong.
+
+**\`concede\`** — the finding was mistaken. Use it when:
 - they point at code that settles it — a wrapper that already validates, a
   guard a few lines up, a call that cannot be reached
 - the fix conflicts with a convention the file or repository already follows
-- they fixed it, or explained why the shape you asked for would be wrong
+- they explain why the shape you asked for would be wrong
 - you cannot show, from the code in front of you, that they are mistaken
+
+**\`hold\`** — see below.
+
+The line between \`fixed\` and \`concede\` is not politeness, it decides whether
+this finding is ever raised again. A conceded finding is suppressed for good; a
+fixed one is a finding that worked and should keep working.
 
 ## Hold only when
 you can point to the specific line that contradicts them. Not "it may still be
@@ -40,6 +52,9 @@ and pressing one wastes a reviewer's credibility on the findings that are real.
 ## Writing the reply
 Two or three sentences. Say what you now understand, not what you feel about it.
 
+- Fixed: one line confirming what you can see in the code now. "Confirmed — the
+  cleanup resets the ref, so a changed email re-identifies." Do not thank them
+  and do not restate the finding.
 - Conceding: name the thing you missed. "Missed that the client wrapper trims
   before sending — the validation is a layer down from where I was reading." That
   sentence is the whole value of the exchange, because it is what stops the
@@ -60,11 +75,14 @@ export const RESPONSE_SCHEMA = {
   // declared property is absent from `required`. `contradicting_line` is
   // meaningful only when holding, so the prompt asks for an empty string
   // otherwise rather than for the field to be omitted.
-  required: ['concede', 'reply', 'confidence', 'contradicting_line'],
+  required: ['outcome', 'reply', 'confidence', 'contradicting_line'],
   properties: {
-    concede: {
-      type: 'boolean',
-      description: 'True to withdraw the finding. Default to true unless a specific line disproves them.',
+    outcome: {
+      type: 'string',
+      enum: ['fixed', 'concede', 'hold'],
+      description:
+        '`fixed` when the code now does what the finding asked and you can see it; '
+        + '`concede` when the finding was wrong; `hold` only with a line that disproves them.',
     },
     reply: { type: 'string', description: 'Two or three sentences, posted verbatim into the thread.' },
     confidence: { type: 'number', description: '0 to 1.' },
@@ -111,7 +129,7 @@ export function buildRespondPrompt(
 }
 
 export interface Response {
-  concede: boolean;
+  outcome: 'fixed' | 'concede' | 'hold';
   reply: string;
   confidence: number;
 }
@@ -125,17 +143,19 @@ export interface Response {
  * conceding survives contact with a model that would rather be right.
  */
 export function settleResponse(
-  raw: { concede: boolean; reply: string; confidence?: number; contradicting_line?: string },
+  raw: { outcome?: string; reply: string; confidence?: number; contradicting_line?: string },
   fileText: string | undefined,
   log: (m: string) => void = () => {},
 ): Response {
   const confidence = Math.max(0, Math.min(1, raw.confidence ?? 0.5));
-  if (raw.concede) return { concede: true, reply: raw.reply.trim(), confidence };
+  const reply = raw.reply.trim();
+  if (raw.outcome === 'fixed') return { outcome: 'fixed', reply, confidence };
+  if (raw.outcome !== 'hold') return { outcome: 'concede', reply, confidence };
 
   const line = (raw.contradicting_line ?? '').trim();
   if (!line) {
     log('  holding without a cited line; conceding instead');
-    return { concede: true, reply: raw.reply.trim(), confidence };
+    return { outcome: 'concede', reply, confidence };
   }
   // The line has to exist. Whitespace is normalised because a model retyping a
   // line from memory reproduces its content and not its indentation.
@@ -143,8 +163,8 @@ export function settleResponse(
     const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
     if (!flat(fileText).includes(flat(line))) {
       log(`  holding on a line that is not in the file: ${line.slice(0, 60)}`);
-      return { concede: true, reply: raw.reply.trim(), confidence };
+      return { outcome: 'concede', reply, confidence };
     }
   }
-  return { concede: false, reply: raw.reply.trim(), confidence };
+  return { outcome: 'hold', reply, confidence };
 }

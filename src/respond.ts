@@ -35,9 +35,12 @@ export interface RespondOptions {
 
 export interface RespondOutcome {
   answered: number;
+  /** Confirmed fixed: thread resolved, nothing suppressed. */
+  fixed: number;
+  /** The finding was wrong: thread resolved and never raised again. */
   conceded: number;
   held: number;
-  threads: { path: string; concede: boolean; reply: string }[];
+  threads: { path: string; outcome: 'fixed' | 'concede' | 'hold'; reply: string }[];
 }
 
 export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> {
@@ -52,7 +55,7 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
   }
   if (!open.length) {
     log('No unanswered replies.');
-    return { answered: 0, conceded: 0, held: 0, threads: [] };
+    return { answered: 0, fixed: 0, conceded: 0, held: 0, threads: [] };
   }
   log(`${open.length} unanswered ${open.length === 1 ? 'reply' : 'replies'}`);
 
@@ -94,7 +97,7 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
   // the question, and resolving that name is what this pass turns on.
   const graph = await buildIndex(opts.workspace).catch(() => undefined);
 
-  const out: RespondOutcome = { answered: 0, conceded: 0, held: 0, threads: [] };
+  const out: RespondOutcome = { answered: 0, fixed: 0, conceded: 0, held: 0, threads: [] };
 
   for (const r of open) {
     try {
@@ -105,7 +108,7 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
       ).catch(() => []);
 
       const { value } = await model.json<{
-        concede: boolean; reply: string; confidence?: number; contradicting_line?: string;
+        outcome?: string; reply: string; confidence?: number; contradicting_line?: string;
       }>(
         [
           { role: 'system', content: RESPONDER_SYSTEM },
@@ -119,22 +122,30 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
       );
 
       const decision = settleResponse(value, fileText, log);
-      log(`  ${decision.concede ? 'concede' : 'hold   '}  ${r.path}: ${decision.reply.slice(0, 90)}`);
-      out.threads.push({ path: r.path, concede: decision.concede, reply: decision.reply });
-      decision.concede ? out.conceded++ : out.held++;
+      log(`  ${decision.outcome.padEnd(7)}  ${r.path}: ${decision.reply.slice(0, 90)}`);
+      out.threads.push({ path: r.path, outcome: decision.outcome, reply: decision.reply });
+      if (decision.outcome === 'fixed') out.fixed++;
+      else if (decision.outcome === 'concede') out.conceded++;
+      else out.held++;
       out.answered++;
 
       if (opts.dryRun) continue;
 
       await gh.replyInThread(opts.prNumber, r.rootCommentId, decision.reply);
-      if (decision.concede) {
-        // Resolving and recording are the point of conceding. An unresolved
-        // thread still reads as an open objection, and an unrecorded rejection
-        // comes back as the same finding on the next pull request.
+
+      // Both a fix and a concession close the thread; only one of them means
+      // the finding was wrong.
+      //
+      // Recording a rejection suppresses that finding for good. Doing it when
+      // somebody has just *fixed* what it reported would retire the finding
+      // precisely because it worked — so "fixed in abc123" resolves the thread
+      // and teaches nothing, while "this is wrong because…" resolves it and is
+      // remembered.
+      if (decision.outcome !== 'hold') {
         await gh.resolveThreadById(r.threadId).catch((err) =>
           log(`  could not resolve the thread: ${String(err).slice(0, 120)}`));
-        await recordRejection(opts, r);
       }
+      if (decision.outcome === 'concede') await recordRejection(opts, r);
     } catch (err) {
       // One thread failing must not cost the others. A reply that cannot be
       // written is a thread left open, which is where it started.
@@ -142,7 +153,7 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
     }
   }
 
-  log(`Answered ${out.answered}: conceded ${out.conceded}, held ${out.held}`);
+  log(`Answered ${out.answered}: ${out.fixed} fixed, ${out.conceded} conceded, ${out.held} held`);
   return out;
 }
 

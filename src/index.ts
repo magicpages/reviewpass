@@ -303,6 +303,7 @@ async function main() {
       log: core.info,
     });
     core.setOutput('answered', String(out.answered));
+    core.setOutput('fixed', String(out.fixed));
     core.setOutput('conceded', String(out.conceded));
     return;
   }

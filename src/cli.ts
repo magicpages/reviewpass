@@ -155,7 +155,8 @@ if (!base && !prNumber) {
       review a pull request; --post submits it
 
   reviewpass respond --repo owner/name --pr N [--post]
-      answer maintainers who replied to findings; concede or hold with evidence
+      answer maintainers who replied to findings: confirm a fix, concede,
+      or hold with evidence
 
   reviewpass init-app [--org ORG] [--name NAME] [--key-out FILE]
       create a GitHub App so reviews post under their own identity and
