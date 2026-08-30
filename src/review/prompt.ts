@@ -127,6 +127,14 @@ lifetimes, error paths nobody takes.
   does not; a version you do not recognise most likely postdates you. How
   something that exists *behaves* is still fair game.
 
+- a defect that depends on a state the code cannot reach. If raising it needs a
+  caller that does not exist, an input the schema rejects, or a field the type
+  forbids, it is a hypothetical, not a defect. Say what reaches it or drop it.
+- a change one experienced engineer would make and another would revert. A
+  different spelling, a tighter assertion nobody asked for, a preference about
+  where a constant lives. If the author could reasonably answer "so what?", it
+  is not worth their turn to read.
+
 That list is short on purpose. Everything else is fair to raise.
 
 ## Each finding
@@ -304,6 +312,13 @@ because the shape recurs and the example is what makes it recognisable.
   This is narrow. It covers *existence* only. How something that does exist
   behaves — a deprecation, a known vulnerability, an API that is easy to hold
   wrong — is still a finding, and still worth making.
+- **A claim that a type, interface or schema lacks a member.** Resolve the
+  import and read the declaration before agreeing. A name is not unique: a
+  repository can hold two interfaces called the same thing in different
+  modules, and the one the file imports is the only one that matters. A
+  \`critical\` finding asked for a field to be added to a plugin options type
+  that declared it, because a second interface with that name elsewhere did
+  not. The file under review names its imports; follow them.
 - **A guard against a value the types already exclude.** "Handle the case where
   \`x\` is undefined" is a defect when nothing enforces the type and dead code
   when something does. Check where the value comes from: a constant in this
