@@ -31,6 +31,12 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+      # The deterministic half of the evaluation. No model calls, no network,
+      # no cost: every case is invented and every assertion is a rule a live
+      # false positive taught us. Expected to be green and to stay green.
+      - name: Regression suite
+        run: npm test
+
       # The example workflow is code that only GitHub can run, and it fails at
       # dispatch rather than at review time. A missing parenthesis in it shipped
       # to a live repository and silently disabled a whole trigger.

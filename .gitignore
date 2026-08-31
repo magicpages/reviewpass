@@ -39,3 +39,10 @@ bench/
 eval/
 *labelled*.json
 *patches*.json
+
+# Triage corpora are derived from a private repository's review threads: even
+# with identifiers renamed, a finding body still describes real query shapes
+# and real architecture. The committed suite uses invented cases instead.
+test/cases/
+*triaged*.json
+*-fixture.json
