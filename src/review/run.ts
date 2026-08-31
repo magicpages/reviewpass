@@ -325,9 +325,13 @@ export async function verify(
       confidence: value.confidence,
       importance,
     };
-  } catch {
-    // A verifier that cannot run must not silently drop real findings.
-    return { ...finding, verdict: 'upheld', verdictReason: 'verification unavailable', confidence: 0.5 };
+  } catch (err) {
+    // A verifier that cannot run must not silently drop real findings. But it
+    // must not hide *why* it could not run either: swallowing the cause turned
+    // two prompt evaluations into 60-of-60 upholds that read as a real result
+    // and were nothing but a failing model call.
+    if (process.env.REVIEWPASS_DEBUG) console.error(`  verify failed on ${finding.path}:${finding.startLine} — ${String(err).slice(0, 200)}`);
+    return { ...finding, verdict: 'upheld', verdictReason: `verification unavailable: ${String(err).slice(0, 120)}`, confidence: 0.5 };
   }
 }
 

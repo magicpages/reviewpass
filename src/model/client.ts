@@ -116,9 +116,21 @@ export class ModelClient {
     // source to whoever serves the request, and a broker left to route on price
     // can land on a provider serving the same model an order of magnitude
     // slower than the fast end of its pool.
+    // `REVIEWPASS_ZDR=1` means zero-retention or nothing: if no such provider is
+    // serving the model, the request fails rather than quietly going somewhere
+    // that keeps the source. `REVIEWPASS_ZDR=prefer` asks for the same routing
+    // but lets a review finish when the zero-retention pool is down, announcing
+    // on every fallback where the code actually went. The difference matters
+    // because the strict promise is the one an operator may have made to
+    // someone else - it is not ours to downgrade on their behalf.
+    const zdrMode = (envAny('ZDR') ?? '').toLowerCase();
+    const zdrPreferred = zdrMode === 'prefer';
     const provider = this.cfg.model.provider
-      ?? (envAny('ZDR') === '1' ? { zdr: true } : undefined);
+      ?? (zdrMode === '1' || zdrMode === 'true' || zdrMode === 'strict' || zdrPreferred
+        ? { zdr: true }
+        : undefined);
     if (provider && Object.keys(provider).length) body.provider = provider;
+    let droppedZdr = false;
 
     let lastErr: unknown;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -143,8 +155,12 @@ export class ModelClient {
           throw Object.assign(new Error(`model ${res.status}: ${text.slice(0, 300)}`), { fatal: true });
         }
         const json = (await res.json()) as ChatResponse;
-        const choice = json.choices[0];
-        if (!choice) throw new Error('model returned no choices');
+        // OpenRouter answers 200 with an `error` body when no provider can serve
+        // the request - a ZDR filter that matches nothing, or a model that is
+        // temporarily unrouteable. Indexing `choices` first turns that into an
+        // unreadable TypeError and makes the guard below dead code.
+        const choice = json.choices?.[0];
+        if (!choice) throw new Error(`model returned no choices: ${JSON.stringify(json).slice(0, 240)}`);
         this.totalPrompt += json.usage?.prompt_tokens ?? 0;
         this.totalCompletion += json.usage?.completion_tokens ?? 0;
         return {
@@ -155,6 +171,16 @@ export class ModelClient {
         };
       } catch (err) {
         lastErr = err;
+        // OpenRouter reports an empty zero-retention pool as "no healthy
+        // upstream" rather than as a routing error, so match on that: it is the
+        // one failure a wider pool actually fixes. Done once per request, and
+        // only when the operator chose `prefer`.
+        if (zdrPreferred && !droppedZdr && /no healthy upstream|no (allowed|available) providers/i.test(String(err))) {
+          droppedZdr = true;
+          delete body.provider;
+          console.error(`  no zero-retention provider is serving ${body.model}; falling back to the open pool for this request`);
+          continue;
+        }
         if ((err as { fatal?: boolean }).fatal) throw err;
         await sleep(Math.min(30_000, 2_000 * 2 ** attempt));
       } finally {

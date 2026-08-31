@@ -108,6 +108,21 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       .map((s) => `${SEVERITY_LABEL[s]} ${bySeverity.get(s)}`)
       .join(' · ');
     out.push(`**${r.findings.length} finding${r.findings.length === 1 ? '' : 's'}** — ${tally}`);
+
+    // Verification fails open: a finding whose verify call could not run is
+    // upheld rather than dropped, so a verifier outage produces a review that
+    // looks exactly like a clean one while nothing has been checked. Say so.
+    // The provider pool for the verify model can be down while the find model
+    // is healthy, which is precisely when this is invisible from the outside.
+    const unverified = r.findings.filter((f) => /^verification unavailable/.test(f.verdictReason ?? '')).length;
+    if (unverified) {
+      out.push(
+        '',
+        unverified === r.findings.length
+          ? '_The verifier could not be reached. Every finding below is unverified — treat each as a question, not a conclusion._'
+          : `_The verifier could not be reached for ${unverified} of ${r.findings.length} findings; those are unverified._`,
+      );
+    }
   }
 
   if (unanchored.length) {

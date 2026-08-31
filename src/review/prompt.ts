@@ -378,6 +378,18 @@ false when:
   not a review comment: it commits the team to a pattern everywhere. Real
   concern, wrong venue - it belongs in its own issue.
 
+- **it asks for a test of behaviour the suite already pins elsewhere.** A
+  missing assertion is always genuinely missing, so \`correct\` can never reject
+  one of these - this is the question that has to. Before upholding a request
+  for a new test or a new assertion, look through the file you have been given
+  for a test that already covers the behaviour. A request to assert a response
+  status that four sibling tests already assert, or to test a function whose
+  round-trip test pins the same property end to end, is redundant, not missing.
+  Uphold it when it names the regression that would otherwise pass unnoticed:
+  *the empty-trail path takes an early return, so dropping the signature block
+  would still go green* is a real gap; *this test could also check \`success\`*
+  is not.
+
 Answer it true when the change introduced the problem, made it reachable, or
 was plainly the moment to deal with it — a new call to an existing function that
 was always unsafe *is* in scope, because this change is what reaches it.

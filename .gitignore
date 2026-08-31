@@ -31,3 +31,11 @@ learnings.json*
 .probe/
 bench/
 *.log
+
+# Evaluation fixtures are built from a private repository's pull requests: the
+# labelled findings quote maintainer triage and the patches are literal source.
+# Ignored by shape rather than by exact name, because a rename is exactly how
+# the last set of private data nearly reached this repo.
+eval/
+*labelled*.json
+*patches*.json
