@@ -318,10 +318,17 @@ export async function verify(
     // legitimately say "no migration is needed" while reporting a real defect,
     // so it is matched narrowly. A *title* that announces the absence of a
     // problem is the whole comment's headline and is never a real finding.
-    const withdrawnAnywhere = /\b(no change (is )?(needed|required)|this is (fine|correct) as written|no action (needed|required)|no defect (found|here)|identifies no defect|not a defect)\b/i;
-    const withdrawnInTitle = /\b(no finding|correctly implemented|no \w+ (is |are )?(needed|required))\b|\bis correct\b/i;
+    const withdrawnAnywhere = /\b(no change (is )?(needed|required)|this is (fine|correct) as written|no action (needed|required)|no defect\b|identifies no defect|not a defect|nothing to change)\b/i;
+    const withdrawnInTitle = /\b(no finding|correctly implemented|not a problem|already (done|present|handled)|no \w+ (is |are )?(needed|required))\b|\bis correct\b/i;
+    // The conclusion lands last. A finding can spend eight hundred characters
+    // building a case and end "So this is actually correct. Withdrawing this
+    // finding." - the retraction is structural, at the tail, and looking for it
+    // there catches phrasings a fixed vocabulary never will. Chasing the
+    // wording alone took three pull requests and six distinct spellings.
+    const withdrawnAtEnd = /\b(withdraw\w*|actually correct|is correct|no defect|not a (defect|problem|bug)|already (done|present|handled|in place)|no change (is )?(needed|required))\b/i;
     const selfWithdrawn = withdrawnAnywhere.test(`${finding.title} ${finding.body}`)
-      || withdrawnInTitle.test(finding.title);
+      || withdrawnInTitle.test(finding.title)
+      || withdrawnAtEnd.test(finding.body.slice(-220));
     const kept = value.correct && value.in_scope !== false && !selfWithdrawn;
     const why = !value.correct ? 'incorrect'
       : value.in_scope === false ? 'out of scope'
