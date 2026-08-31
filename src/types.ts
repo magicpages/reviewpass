@@ -139,6 +139,8 @@ export interface ReviewResult {
    */
   reviewedFiles?: number;
   failedFiles?: number;
+  /** Findings from earlier passes still awaiting an answer. */
+  openFindings?: number;
   /** Set when nothing could be reviewed for a reason the author cannot fix. */
   blocked?: { message: string };
 }

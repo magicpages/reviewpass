@@ -650,11 +650,25 @@ export function decideEvent(
   findings: Finding[],
   cfg: ReviewpassConfig,
   hadFailure: boolean,
+  openFindings = 0,
 ): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' {
   const threshold = SEVERITY_RANK[cfg.review.requestChangesAt];
   const blocking = findings.filter((f) => SEVERITY_RANK[f.severity] >= threshold);
 
   if (blocking.length) return 'REQUEST_CHANGES';
+
+  // An approval speaks for the whole pull request, not for the commits this
+  // pass happened to read.
+  //
+  // An incremental review reads only what is new, so a push that touches
+  // nothing reviewable - a CI fix, a lockfile bump - finds nothing and used to
+  // approve on the strength of it. On a real pull request that retracted a
+  // finding nobody had answered: reviewed at 20:10 with one finding open,
+  // approved at 05:51 saying "Nothing to raise", with the thread still open.
+  //
+  // Finding nothing new is not the same as having nothing to say.
+  if (findings.length === 0 && openFindings > 0) return 'COMMENT';
+
   if (findings.length === 0 && cfg.review.approveWhenClean && !hadFailure) return 'APPROVE';
   return 'COMMENT';
 }

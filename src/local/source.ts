@@ -93,6 +93,8 @@ export class LocalSource {
       postedFingerprints: new Set<string>(),
       lastReviewedSha: undefined,
       walkthroughId: undefined,
+      // Nothing was ever posted locally, so nothing can be outstanding.
+      openFindings: 0,
     } as unknown as ExistingReview;
   }
 

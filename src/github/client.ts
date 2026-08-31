@@ -45,6 +45,15 @@ export interface ExistingReview {
   /** Head SHA of the last review reviewpass posted, for incremental runs. */
   lastReviewedSha?: string;
   walkthroughCommentId?: number;
+  /**
+   * Findings from earlier passes that are still open.
+   *
+   * An incremental review only reads the new commits, so a push that touches
+   * nothing reviewable — a CI fix, a lockfile — legitimately finds nothing. That
+   * is not the same as having nothing to say, and approving on it retracts every
+   * finding still waiting for an answer.
+   */
+  openFindings: number;
 }
 
 /** One of our findings that a maintainer answered and we have not answered back. */
@@ -229,7 +238,10 @@ export class GitHubClient {
       lastReviewedSha = /<!-- (?:reviewpass|warren):sha:([0-9a-f]{7,40}) -->/.exec(c.body)?.[1];
     }
 
-    return { fingerprints, lastReviewedSha, walkthroughCommentId };
+    return {
+      fingerprints, lastReviewedSha, walkthroughCommentId,
+      openFindings: await this.countOpenFindings(number),
+    };
   }
 
   /**
@@ -518,6 +530,31 @@ export class GitHubClient {
       });
     }
     return out;
+  }
+
+  /** How many of our own finding threads are still unresolved. */
+  async countOpenFindings(number: number): Promise<number> {
+    try {
+      const data = await this.kit.graphql<{
+        repository: { pullRequest: { reviewThreads: { nodes: {
+          isResolved: boolean; comments: { nodes: { body: string }[] };
+        }[] } } };
+      }>(
+        `query($owner:String!,$repo:String!,$number:Int!){
+           repository(owner:$owner,name:$repo){ pullRequest(number:$number){
+             reviewThreads(first:100){ nodes {
+               isResolved comments(first:1){ nodes { body } }
+             } } } } }`,
+        { owner: this.owner, repo: this.repo, number },
+      );
+      return data.repository.pullRequest.reviewThreads.nodes.filter(
+        (t) => !t.isResolved && FINDING_RE.test(t.comments.nodes[0]?.body ?? ''),
+      ).length;
+    } catch {
+      // Unknown is not zero, but a review must not fail because a count did.
+      // Callers treat 0 as "nothing outstanding", which only loses the guard.
+      return 0;
+    }
   }
 
   /** Answer inside a thread rather than starting a new one. */

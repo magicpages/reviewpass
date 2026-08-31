@@ -300,7 +300,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     const empty: ReviewResult = {
       findings: [], walkthrough: 'No reviewable changes in this update.', fileGroups: [],
       effort: { score: 1, label: 'Trivial' }, mergeRisk: 'minimal', checks: [],
-      event: cfg.review.approveWhenClean ? 'APPROVE' : 'COMMENT', skipped,
+      event: decideEvent([], cfg, false, prior.openFindings), skipped,
     };
     const plan: ReviewPlan = { anchored: [], unanchored: [] };
     if (!opts.dryRun) {
@@ -535,7 +535,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     runChecks(model, cfg, pr),
   ]);
 
-  const event = decideEvent(findings, cfg, failures > 0);
+  const event = decideEvent(findings, cfg, failures > 0, prior.openFindings);
   const reviewedFiles = units.length - failures;
   // Every file hit the same wall, and it is a wall the author of this pull
   // request cannot climb. Say so plainly instead of reporting a clean review.
@@ -543,7 +543,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   const result: ReviewResult = {
     findings, walkthrough: walk.summary, fileGroups: walk.groups,
     effort: walk.effort, mergeRisk: walk.mergeRisk, checks, event, skipped,
-    reviewedFiles, failedFiles: failures, blocked,
+    reviewedFiles, failedFiles: failures, blocked, openFindings: prior.openFindings,
   };
 
   // ── post ──────────────────────────────────────────────────────────────────

@@ -96,7 +96,9 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
         ? `_${r.blocked.message} This says nothing about the change._`
         : r.failedFiles && r.failedFiles > 0
           ? `**Incomplete review.** ${r.failedFiles} of ${r.failedFiles + (r.reviewedFiles ?? 0)} file(s) failed; nothing was raised in the rest.`
-          : 'Nothing to raise.',
+          : r.openFindings
+            ? `Nothing new in these commits. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
+            : 'Nothing to raise.',
     );
   } else {
     const bySeverity = new Map<string, number>();
