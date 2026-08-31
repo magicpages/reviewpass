@@ -310,8 +310,18 @@ export async function verify(
     // Occasionally the find pass reasons its way to "no change needed" and
     // reports it anyway. Posting that wastes the reader's attention on the
     // reviewer's own discarded hypothesis - seen once on a live pull request.
-    const selfWithdrawn = /\b(no change (is )?(needed|required)|this is (fine|correct) as written|no action (needed|required)|no defect (found|here)|identifies no defect|not a defect)\b/i
-      .test(finding.body);
+    // Then seen seven times on one file of another, because the withdrawal was
+    // announced in the title ("TTL index is well-defined - no change needed")
+    // while the body read like an ordinary finding, and only the body was
+    // checked. Both halves are read now.
+    // Two patterns, because the two fields carry different risk. A body may
+    // legitimately say "no migration is needed" while reporting a real defect,
+    // so it is matched narrowly. A *title* that announces the absence of a
+    // problem is the whole comment's headline and is never a real finding.
+    const withdrawnAnywhere = /\b(no change (is )?(needed|required)|this is (fine|correct) as written|no action (needed|required)|no defect (found|here)|identifies no defect|not a defect)\b/i;
+    const withdrawnInTitle = /\b(no finding|correctly implemented|no \w+ (is |are )?(needed|required))\b|\bis correct\b/i;
+    const selfWithdrawn = withdrawnAnywhere.test(`${finding.title} ${finding.body}`)
+      || withdrawnInTitle.test(finding.title);
     const kept = value.correct && value.in_scope !== false && !selfWithdrawn;
     const why = !value.correct ? 'incorrect'
       : value.in_scope === false ? 'out of scope'
