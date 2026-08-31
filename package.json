@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "daemon": "tsx src/server/main.ts",
     "build:daemon": "esbuild src/server/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/reviewpassd.cjs --external:better-sqlite3 --external:sqlite-vec",
-    "build:cli": "tsc -p tsconfig.build.json"
+    "build:cli": "tsc -p tsconfig.build.json",
+    "harvest": "node scripts/harvest-triage.mjs"
   },
   "keywords": [
     "code-review",
