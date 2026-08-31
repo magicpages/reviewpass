@@ -10,7 +10,7 @@ import { selectFiles, groupFiles } from './context/select.js';
 import { mineInstructions, rulesFor } from './context/instructions.js';
 import { gatherContext, describeBackend, contextBudgetFor, filesNamedIn } from './context/retrieve.js';
 import { buildIndex, listSourceFiles } from './graph/index.js';
-import { runTools, toolFindingsFor , typeStrictness } from './context/tools.js';
+import { runTools, toolFindingsFor , typeStrictness, testedSymbols } from './context/tools.js';
 import { scopesFor, type RecordedFinding } from './store/common.js';
 import { FileLearningStore } from './store/file-learnings.js';
 import { deriveMemory } from './store/derive.js';
@@ -20,7 +20,7 @@ import { rerankOverChange } from './store/rerank.js';
 import { symbolsInPatch } from './context/retrieve.js';
 import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
-  collapseNearDuplicates, capPerRegion, citesMissingArtifact,
+  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
@@ -469,12 +469,28 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     log.info(`Collapsed ${fresh.length} candidates to ${deduped.length} before verification`);
   }
 
+  // Settle "add a test for X" against the suite rather than against the model.
+  // Over 107 triaged findings this shape was raised eight times and rejected
+  // eight times, because by the time a review runs the author has already
+  // written the tests for the change. Dropped here rather than at verification:
+  // the verifier shares the finder's blind spot and upheld every one of them.
+  const tested = testedSymbols(workspace);
+  const beforeTests = deduped.length;
+  const survived = deduped.filter((f) => {
+    const sym = redundantTestRequest(f, tested);
+    if (sym) log.info(`  dropped "${f.title.slice(0, 56)}" — \`${sym}\` is already exercised by the suite`);
+    return !sym;
+  });
+  if (survived.length < beforeTests) {
+    log.info(`Dropped ${beforeTests - survived.length} request(s) for tests the suite already has`);
+  }
+
   // Drop what names something the repository does not contain, before paying a
   // model to think about it. A finding that cited a module which never existed
   // reached a live pull request and read as authoritative all the way through.
   const repoFiles = new Set(listSourceFiles(workspace));
   const unitByPathEarly = new Map(units.map((u) => [u.path, u]));
-  const grounded = deduped.filter((f) => {
+  const grounded = survived.filter((f) => {
     const missing = citesMissingArtifact(f, repoFiles);
     if (missing) {
       log.info(`dropped (cites missing \`${missing}\`): ${f.title}`);

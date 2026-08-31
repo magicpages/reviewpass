@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { existsSync, symlinkSync, readFileSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import type { ReviewpassConfig } from '../config/index.js';
+import { listSourceFiles } from '../graph/build.js';
 
 const exec = promisify(execFile);
 
@@ -333,4 +334,27 @@ export function typeStrictness(root: string, forPath?: string): TypeStrictness {
     if (found) return found;
   }
   return { strictNullChecks: false, noUncheckedIndexedAccess: false };
+}
+
+/**
+ * Identifiers that any test file in the workspace already refers to.
+ *
+ * Used to settle "add a test for X" without a model call: if a test mentions X
+ * at all, the suite is not silent about it, and the burden moves to the finding
+ * to say why the existing coverage is not enough. Cheap and deliberately
+ * shallow — a mention is not proof of a good test, but absence of a mention is
+ * good proof of no test, and that is the direction the check is trusted in.
+ */
+export function testedSymbols(root: string): Set<string> {
+  const out = new Set<string>();
+  const files = listSourceFiles(root).filter((p) => /(\.test\.|\.spec\.|__tests__\/|\/tests?\/)/.test(p));
+  for (const rel of files.slice(0, 2_000)) {
+    let text: string;
+    try { text = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
+    for (const m of text.matchAll(/\b([A-Za-z_$][\w$]{3,})\b/g)) {
+      const id = m[1];
+      if (id) out.add(id);
+    }
+  }
+  return out;
 }

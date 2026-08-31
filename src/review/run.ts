@@ -854,3 +854,51 @@ export function reconcileWithRefutations(
   });
   return { kept: survivors, overturned };
 }
+
+/**
+ * A request for a whole new test, where the thing to be tested is already
+ * exercised somewhere in the suite.
+ *
+ * Measured over 107 findings the maintainer triaged on nine pull requests, the
+ * two shapes behave nothing alike. "Add a test for X" was raised eight times
+ * and rejected eight times. "Assert X in the existing test" was raised eleven
+ * times and applied nine. There is a mechanism behind the split rather than
+ * just a correlation: by the time a reviewer runs, the author has already
+ * written the tests that go with the change, so a demand for a *new* test is
+ * usually redundant with one already in the diff, while a demand for a
+ * *stronger assertion* inside those new tests is a real gap nobody has filled.
+ *
+ * The coverage check is the safety valve. A change that genuinely ships with no
+ * test at all must still be caught, so the finding only dies when the symbol it
+ * names is already referenced from a test file.
+ */
+const ASKS_FOR_NEW_TEST =
+  /^\s*(add|write|missing)\b[^.]{0,60}\btests?\b|^\s*add test coverage|^\s*test (the|a) \w+ (function|case|branch)/i;
+
+export function redundantTestRequest(
+  finding: { title: string; body: string },
+  testedSymbols: Set<string> | undefined,
+): string | null {
+  if (!testedSymbols?.size) return null;
+  if (!ASKS_FOR_NEW_TEST.test(finding.title)) return null;
+
+  // The symbol under test: prefer a backticked identifier, which is how the
+  // find pass names the thing it wants covered.
+  const named = [
+    ...finding.title.matchAll(/`([A-Za-z_$][\w$.]{7,})`/g),
+    ...finding.body.slice(0, 400).matchAll(/`([A-Za-z_$][\w$.]{7,})`/g),
+  ].flatMap((m) => {
+    const root = m[1]?.split('.')[0];
+    return root ? [root] : [];
+  });
+
+  for (const sym of named) {
+    // Only a distinctive name settles anything. `href` and `findOneAndUpdate`
+    // appear in nearly every test file in a repository, so matching on them
+    // would retire findings about code nobody has tested. A name has to be
+    // long and compound enough to belong to this change.
+    if (sym.length < 8 || !/[A-Z]/.test(sym.slice(1))) continue;
+    if (testedSymbols.has(sym)) return sym;
+  }
+  return null;
+}
