@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig, envAny, type ReviewpassConfig } from './config/index.js';
 import { ModelClient } from './model/client.js';
@@ -20,7 +20,7 @@ import { rerankOverChange } from './store/rerank.js';
 import { symbolsInPatch } from './context/retrieve.js';
 import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
-  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest,
+  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
@@ -469,14 +469,37 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     log.info(`Collapsed ${fresh.length} candidates to ${deduped.length} before verification`);
   }
 
+  // A finding has to quote the line that proves it, and the quote has to be
+  // there. Of 141 findings a maintainer rejected across 29 pull requests, the
+  // largest group was answered by pointing at a location the reviewer had never
+  // opened - an existing test, the only caller, the real signature in the SDK.
+  // Opening the cited file is cheap; the claims that cannot survive it are the
+  // ones that were never checked.
+  const readCited = (rel: string): string | null => {
+    // Only inside the workspace. A citation is untrusted text and must not be
+    // able to walk out of the checkout.
+    const full = resolve(workspace, rel);
+    if (!full.startsWith(resolve(workspace))) return null;
+    try { return readFileSync(full, 'utf8'); } catch { return null; }
+  };
+  const beforeEvidence = deduped.length;
+  const evidenced = deduped.filter((f) => {
+    const check = citationResolves(f.settledBy, readCited);
+    if (!check.ok) log.info(`  dropped "${f.title.slice(0, 52)}" — ${check.why}`);
+    return check.ok;
+  });
+  if (evidenced.length < beforeEvidence) {
+    log.info(`Dropped ${beforeEvidence - evidenced.length} finding(s) whose cited evidence did not resolve`);
+  }
+
   // Settle "add a test for X" against the suite rather than against the model.
   // Over 107 triaged findings this shape was raised eight times and rejected
   // eight times, because by the time a review runs the author has already
   // written the tests for the change. Dropped here rather than at verification:
   // the verifier shares the finder's blind spot and upheld every one of them.
   const tested = testedSymbols(workspace);
-  const beforeTests = deduped.length;
-  const survived = deduped.filter((f) => {
+  const beforeTests = evidenced.length;
+  const survived = evidenced.filter((f) => {
     const sym = redundantTestRequest(f, tested);
     if (sym) log.info(`  dropped "${f.title.slice(0, 56)}" — \`${sym}\` is already exercised by the suite`);
     return !sym;

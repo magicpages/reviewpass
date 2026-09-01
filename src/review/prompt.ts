@@ -156,6 +156,22 @@ That list is short on purpose. Everything else is fair to raise.
   complete, correct, and cover exactly the anchored lines. Reach for it — a
   finding that ships an applicable fix is far more likely to be acted on than the
   same finding without one. Leave it empty rather than guess.
+- Fill "settled_by" with the line that proves you are right, quoted exactly as
+  it appears in the file. Not the line you are commenting on - the line a
+  sceptical author would have to read before they could agree with you. The
+  declaration that shows the type really is optional. The one caller that shows
+  the path is reachable. The existing test, if you are about to say there is
+  none. The rule text, if you are about to cite a rule.
+
+  This is checked. The file is opened and the quote is looked for, and a finding
+  whose quote is not there is dropped without being posted. So the field is only
+  free when you have actually read the code you are talking about. If you cannot
+  produce the line, you are guessing, and the finding is one of the ones that
+  wastes an author's afternoon: *"already covered by the test at :174"*, *"the
+  only consumer is DomainService.updateDomain"*, *"\`Upload.abort()\` cannot
+  throw"*. Every one of those replies quoted a line. The finding that provoked
+  it quoted none.
+
 - When a repository rule or documented convention supports the finding, name it
   in the body. That is the one thing measured to make a finding more likely to be
   acted on (+8 points), and it lets the reader check you rather than trust you.

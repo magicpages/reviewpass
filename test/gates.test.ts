@@ -25,7 +25,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { collapseNearDuplicates, redundantTestRequest } from '../src/review/run.js';
+import { collapseNearDuplicates, redundantTestRequest, citationResolves } from '../src/review/run.js';
 import type { Finding } from '../src/types.js';
 
 const finding = (over: Partial<Finding>): Finding => ({
@@ -124,5 +124,61 @@ describe('collapseNearDuplicates', () => {
       finding({ path: 'src/service.test.ts', startLine: 90, endLine: 90, title: 'The signature omits the second argument', body: 'The call passes one argument where two are required.' }),
     ]);
     assert.equal(out.length, 1, 'one defect seen twice is still one defect');
+  });
+});
+
+describe('citationResolves', () => {
+  /**
+   * A finding must quote the line that proves it, and the quote must be there.
+   * The refutations this exists to prevent all named a location the reviewer
+   * had never opened; the findings that provoked them named none.
+   */
+  const file = [
+    'export function widgetLimit(input: string | undefined) {',
+    '  if (!input) return 0;',
+    '  return Number.parseInt(input, 10);',
+    '}',
+  ].join('\n');
+  const read = (p: string) => (p === 'src/limit.ts' ? file : null);
+
+  test('accepts a quote that is really on the cited line', () => {
+    const r = citationResolves({ path: 'src/limit.ts', line: 2, quote: 'if (!input) return 0;' }, read);
+    assert.equal(r.ok, true);
+  });
+
+  test('accepts a quote whose line number drifted by a few', () => {
+    // The model counts hunk headers and blank lines inconsistently. Failing a
+    // true finding over a two-line offset would trade one error for another.
+    const r = citationResolves({ path: 'src/limit.ts', line: 4, quote: 'if (!input) return 0;' }, read);
+    assert.equal(r.ok, true);
+  });
+
+  test('accepts a requoted line whose whitespace and quotes differ', () => {
+    const r = citationResolves(
+      { path: 'src/limit.ts', line: 3, quote: "return Number.parseInt( input , 10 );" }, read);
+    assert.equal(r.ok, true);
+  });
+
+  test('rejects a quote that appears nowhere in the file', () => {
+    const r = citationResolves(
+      { path: 'src/limit.ts', line: 2, quote: 'if (!input) throw new RangeError();' }, read);
+    assert.equal(r.ok, false);
+  });
+
+  test('rejects a citation to a file that is not in the workspace', () => {
+    const r = citationResolves({ path: 'src/imagined.ts', line: 1, quote: 'anything at all' }, read);
+    assert.equal(r.ok, false);
+  });
+
+  test('rejects a finding that cites nothing', () => {
+    assert.equal(citationResolves(undefined, read).ok, false);
+  });
+
+  test('rejects an empty or near-empty quote', () => {
+    // Without this the field is satisfied by a space and proves nothing.
+    for (const quote of ['', ' ', '  }', 'x']) {
+      assert.equal(citationResolves({ path: 'src/limit.ts', line: 1, quote }, read).ok, false,
+        `an empty quote must not satisfy the requirement: ${JSON.stringify(quote)}`);
+    }
   });
 });
