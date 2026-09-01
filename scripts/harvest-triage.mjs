@@ -22,6 +22,11 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const ACCEPTANCE = /^\s*(fixed|done|good catch|thanks|addressed|resolved|applied|will do|agreed)\b/i;
+// Kept in step with src/store/derive.ts on purpose: what the benchmark counts
+// as accepted has to be what the reviewer learns from, or the two drift and the
+// score starts measuring the gap between two graders.
+const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug|no issue)s?\b/i;
+const confirms = (body) => ACCEPTANCE.test(body) && !DECLINED.test(body.slice(0, 200));
 const BOT = /reviewpass/i;
 
 const [repo, ...rest] = process.argv.slice(2);
@@ -79,7 +84,7 @@ for (const pr of prs) {
       severity: (parts[0].match(/\*\*(.+?)\*\*/) ?? [, 'minor'])[1],
       title: parts[1].replace(/\*\*/g, '').trim(),
       body: parts.slice(2).join(' '),
-      label: ACCEPTANCE.test(answer) ? 'good' : 'bad',
+      label: confirms(answer) ? 'good' : 'bad',
       reason: answer.slice(0, 800),
     });
   }

@@ -150,6 +150,9 @@ export async function findInFile(
       siblings: (r.siblings ?? [])
         .filter((s) => s.path && s.path !== unit.path)
         .map((s) => ({ path: s.path, startLine: s.start_line, endLine: s.end_line })),
+      settledBy: r.settled_by?.quote?.trim()
+        ? { path: r.settled_by.path, line: r.settled_by.line, quote: r.settled_by.quote }
+        : undefined,
       fingerprint: fp,
     });
   }
@@ -901,4 +904,71 @@ export function redundantTestRequest(
     if (testedSymbols.has(sym)) return sym;
   }
   return null;
+}
+
+/** Where a finding says the proof of its claim lives. */
+export type Citation = { path: string; line: number; quote: string };
+
+/**
+ * Whether the evidence a finding cites is really there.
+ *
+ * Of 141 findings a maintainer rejected across 29 pull requests, the largest
+ * group by far - 30 of them - was answered with a pointer: "already covered by
+ * the test at :174", "the only consumer is DomainService.updateDomain",
+ * "`Upload.abort()` cannot throw, it is `async abort()` in the SDK", "the
+ * production code already lowercases this". Every one of those refutations
+ * names a location. The finding that provoked it named none, because nothing
+ * ever required it to look.
+ *
+ * So a finding now has to quote the line that settles it, and the quote has to
+ * be found there. A claim about code the reviewer did not read cannot produce
+ * one; a claim about code it did read costs nothing. This does not check that
+ * the evidence supports the conclusion - no cheap test can - but it does check
+ * that the evidence exists, which the fabricated claims could not survive.
+ *
+ * Whitespace and quote style are normalised away: the model retypes a line
+ * rather than copying bytes, and failing it for a changed indent would retire
+ * true findings to punish a formatting difference.
+ */
+export function citationResolves(
+  citation: Citation | undefined,
+  readFile: (path: string) => string | null,
+): { ok: true } | { ok: false; why: string } {
+  if (!citation) return { ok: false, why: 'no evidence cited' };
+  const { path, line, quote } = citation;
+  if (typeof path !== 'string' || !path.trim()) return { ok: false, why: 'evidence names no file' };
+  if (!quote || quote.trim().length < 4) return { ok: false, why: 'evidence quote is empty' };
+
+  const text = readFile(path);
+  if (text === null) return { ok: false, why: `cited file ${path} is not in this workspace` };
+
+  const lines = text.split('\n');
+  // Retyping, not copying: the model reproduces a line from memory, so quote
+  // style, indentation and spaces around punctuation all drift. Normalising
+  // them away costs nothing, and failing a true finding over a reformatted
+  // comma would trade one kind of error for another.
+  const norm = (s: string) => s
+    .replace(/['"`]/g, '"')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([(),;:{}\[\]])\s*/g, '$1')
+    .trim()
+    .toLowerCase();
+  const needle = norm(quote);
+
+  // A window, not an exact line. Line numbers drift by a few when the model
+  // counts a hunk header or a blank, and a finding should not die for that.
+  // The file flattened, so a quote spanning two or three lines still resolves.
+  // Matching line by line rejected every multi-line quote, and the prompt asks
+  // for the line "as it appears" without promising it is only one.
+  // Normalised as one string, not joined from normalised lines: the join adds a
+  // space the needle does not have, so `{ return` would never match `{return`.
+  const flat = norm(lines.join(' '));
+  if (flat.includes(needle)) return { ok: true };
+
+  // Nothing else counts. An earlier version also accepted a quote that
+  // *contained* a real line, on the theory that the model had quoted generously.
+  // It had not: "return true; and this is never awaited" contains "return true;"
+  // and passes, which is precisely the fabrication the citation exists to catch.
+  // A quote is either in the file or it is not.
+  return { ok: false, why: `quoted line is not in ${path} near :${line}` };
 }

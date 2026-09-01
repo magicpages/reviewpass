@@ -37,6 +37,8 @@ export interface Finding {
   fingerprint?: string;
   /** Populated by the verification pass. */
   verdict?: 'upheld' | 'refuted';
+  /** The line the finding quotes as proof, checked against the workspace. */
+  settledBy?: { path: string; line: number; quote: string };
   verdictReason?: string;
   /** 1-5 from the verifier: how much this earns the author's attention. */
   importance?: number;

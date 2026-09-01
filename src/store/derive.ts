@@ -43,6 +43,15 @@ const FINDING_RE = /<!-- (?:reviewpass|warren):finding:([a-f0-9]+) -->/;
 
 /** Replies that accept rather than correct. Nothing to learn from agreement. */
 const ACCEPTANCE = /^\s*(fixed|done|good catch|thanks|addressed|resolved|applied|will do|agreed)\b/i;
+// Politely agreeing that nothing needed changing is not acceptance, and reading
+// it as acceptance is worse than reading it as nothing. "Agreed - no defect,
+// nothing to change" was answered four times on one pull request, to four
+// comments that had announced the code was fine; because the reply opened with
+// "agreed" every one of them was filed as a confirmed finding and none was
+// recorded as rejected. The reviewer was being taught that its own withdrawn
+// hypotheses land well.
+const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug|no issue)s?\b/i;
+const confirms = (body: string) => ACCEPTANCE.test(body) && !DECLINED.test(body.slice(0, 200));
 
 export async function deriveMemory(
   kit: Octokit,
@@ -104,7 +113,7 @@ export async function deriveMemory(
 
         // A reply that just says "fixed" confirms the finding; it is not a
         // correction and teaches nothing. A reply that argues is the signal.
-        const corrections = replies.filter((r: { body: string }) => !ACCEPTANCE.test(r.body));
+        const corrections = replies.filter((r: { body: string }) => !confirms(r.body));
         if (!corrections.length) continue;
 
         rejected.add(fingerprint);

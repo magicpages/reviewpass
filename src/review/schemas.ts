@@ -15,7 +15,7 @@ export const FINDINGS_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['start_line', 'end_line', 'severity', 'category', 'title', 'body', 'suggestion', 'siblings'],
+        required: ['start_line', 'end_line', 'severity', 'category', 'title', 'body', 'suggestion', 'siblings', 'settled_by'],
         properties: {
           start_line: { type: 'integer', description: 'First line of the defect in the NEW file' },
           end_line: { type: 'integer', description: 'Last line of the defect in the NEW file' },
@@ -29,6 +29,20 @@ export const FINDINGS_SCHEMA = {
           suggestion: {
             type: 'string',
             description: 'Replacement source for exactly the anchored lines, or "" if none applies',
+          },
+          settled_by: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['path', 'line', 'quote'],
+            description:
+              'The one place in the code that settles this claim, quoted. Not the line you are '
+              + 'commenting on - the line that proves you are right about it: the declaration, the '
+              + 'caller, the existing test, the guard. Quote it exactly as it appears.',
+            properties: {
+              path: { type: 'string', description: 'File the quote comes from' },
+              line: { type: 'integer', description: 'Line number the quote starts on' },
+              quote: { type: 'string', description: 'Text copied verbatim from that line' },
+            },
           },
           siblings: {
             type: 'array',
@@ -217,4 +231,5 @@ export interface RawFinding {
   body: string;
   suggestion: string;
   siblings: { path: string; start_line: number; end_line: number }[];
+  settled_by?: { path: string; line: number; quote: string };
 }
