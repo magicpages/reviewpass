@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { join, resolve, relative, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig, envAny, type ReviewpassConfig } from './config/index.js';
 import { ModelClient } from './model/client.js';
@@ -476,10 +476,18 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   // Opening the cited file is cheap; the claims that cannot survive it are the
   // ones that were never checked.
   const readCited = (rel: string): string | null => {
-    // Only inside the workspace. A citation is untrusted text and must not be
-    // able to walk out of the checkout.
-    const full = resolve(workspace, rel);
-    if (!full.startsWith(resolve(workspace))) return null;
+    // A citation is untrusted text and must not reach outside the checkout.
+    // Two ways it used to: `startsWith` on the resolved path let a sibling
+    // directory through, because `/tmp/work2` starts with `/tmp/work`; and
+    // `resolve` does not follow symlinks, so a link committed to the repository
+    // pointed wherever it liked. `relative` answers the containment question
+    // properly, and `realpathSync` asks it of the file that will actually be
+    // opened rather than the name that was requested.
+    const root = realpathSync(resolve(workspace));
+    let full: string;
+    try { full = realpathSync(resolve(root, rel)); } catch { return null; }
+    const inside = relative(root, full);
+    if (inside.startsWith('..') || isAbsolute(inside)) return null;
     try { return readFileSync(full, 'utf8'); } catch { return null; }
   };
   const beforeEvidence = deduped.length;

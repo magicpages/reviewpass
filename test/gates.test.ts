@@ -182,3 +182,30 @@ describe('citationResolves', () => {
     }
   });
 });
+
+describe('citationResolves — what its own review caught', () => {
+  const file = ['function run() {', '  return true;', '}'].join('\n');
+  const read = (p: string) => (p === 'src/run.ts' ? file : null);
+
+  test('rejects a real line with fabricated text appended', () => {
+    // The gate exists to catch a claim about code nobody read. An earlier
+    // version accepted any quote that *contained* a real line, so appending an
+    // invention to a true line passed - the exact move it was built to stop.
+    const r = citationResolves(
+      { path: 'src/run.ts', line: 2, quote: 'return true; and this is never awaited' }, read);
+    assert.equal(r.ok, false);
+  });
+
+  test('accepts a quote spanning more than one line', () => {
+    // The prompt asks for the line as it appears and does not promise one line.
+    const r = citationResolves(
+      { path: 'src/run.ts', line: 1, quote: 'function run() { return true;' }, read);
+    assert.equal(r.ok, true);
+  });
+
+  test('rejects a citation with no file named', () => {
+    for (const path of ['', '   ']) {
+      assert.equal(citationResolves({ path, line: 1, quote: 'return true;' }, read).ok, false);
+    }
+  });
+});

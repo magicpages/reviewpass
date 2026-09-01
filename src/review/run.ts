@@ -936,6 +936,7 @@ export function citationResolves(
 ): { ok: true } | { ok: false; why: string } {
   if (!citation) return { ok: false, why: 'no evidence cited' };
   const { path, line, quote } = citation;
+  if (typeof path !== 'string' || !path.trim()) return { ok: false, why: 'evidence names no file' };
   if (!quote || quote.trim().length < 4) return { ok: false, why: 'evidence quote is empty' };
 
   const text = readFile(path);
@@ -956,15 +957,18 @@ export function citationResolves(
 
   // A window, not an exact line. Line numbers drift by a few when the model
   // counts a hunk header or a blank, and a finding should not die for that.
-  const from = Math.max(0, line - 4);
-  const to = Math.min(lines.length, line + 4);
-  for (let i = from; i < to; i++) {
-    const hay = norm(lines[i] ?? '');
-    if (hay.includes(needle) || needle.includes(hay) && hay.length > 8) return { ok: true };
-  }
-  // Fall back to the whole file: the quote being real matters more than the
-  // line number being right.
-  if (lines.some((l) => norm(l).includes(needle))) return { ok: true };
+  // The file flattened, so a quote spanning two or three lines still resolves.
+  // Matching line by line rejected every multi-line quote, and the prompt asks
+  // for the line "as it appears" without promising it is only one.
+  // Normalised as one string, not joined from normalised lines: the join adds a
+  // space the needle does not have, so `{ return` would never match `{return`.
+  const flat = norm(lines.join(' '));
+  if (flat.includes(needle)) return { ok: true };
 
+  // Nothing else counts. An earlier version also accepted a quote that
+  // *contained* a real line, on the theory that the model had quoted generously.
+  // It had not: "return true; and this is never awaited" contains "return true;"
+  // and passes, which is precisely the fabrication the citation exists to catch.
+  // A quote is either in the file or it is not.
   return { ok: false, why: `quoted line is not in ${path} near :${line}` };
 }
