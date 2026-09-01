@@ -157,11 +157,17 @@ That list is short on purpose. Everything else is fair to raise.
   finding that ships an applicable fix is far more likely to be acted on than the
   same finding without one. Leave it empty rather than guess.
 - Fill "settled_by" with the line that proves you are right, quoted exactly as
-  it appears in the file. Not the line you are commenting on - the line a
-  sceptical author would have to read before they could agree with you. The
-  declaration that shows the type really is optional. The one caller that shows
-  the path is reachable. The existing test, if you are about to say there is
-  none. The rule text, if you are about to cite a rule.
+  it appears in the file. Usually that is not the line you are commenting on -
+  it is the line a sceptical author would have to read before they could agree
+  with you. The declaration that shows the type really is optional. The one
+  caller that shows the path is reachable. The existing test, if you are about
+  to say there is none. The rule text, if you are about to cite a rule.
+
+  When the defect is plain in the lines you are anchored to, quote those. A
+  trailing slash in a string that is returned as an identifier needs no witness
+  from elsewhere; the line is its own evidence. Do not drop a finding because
+  the proof is local - that is not a finding without evidence, it is a finding
+  whose evidence is in front of you.
 
   This is checked. The file is opened and the quote is looked for, and a finding
   whose quote is not there is dropped without being posted. So the field is only
