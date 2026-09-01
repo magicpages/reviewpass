@@ -209,3 +209,39 @@ describe('citationResolves — what its own review caught', () => {
     }
   });
 });
+
+describe('reply classification', () => {
+  // Shared verbatim with src/store/derive.ts, because the benchmark's idea of
+  // an accepted finding has to be the reviewer's idea of one. Two graders drift
+  // apart inside a month and the score starts measuring the gap between them.
+  const ACCEPTANCE = /^\s*(fixed|done|good catch|thanks|addressed|resolved|applied|will do|agreed)\b/i;
+  const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug|no issue)s?\b/i;
+  const confirms = (body: string) => ACCEPTANCE.test(body) && !DECLINED.test(body.slice(0, 200));
+
+  test('a polite refusal is not an acceptance', () => {
+    // These opened with "agreed", so every one was filed as a confirmed finding
+    // and none was recorded as rejected. The reviewer was being taught that its
+    // own withdrawn hypotheses land well.
+    for (const reply of [
+      'Agreed — no defect, nothing to change.',
+      'Agreed, no change needed — filing as acknowledged.',
+      'Agreed - no changes needed',
+      'Agreed, no action — the TTL index is intentional.',
+      'Agreed - no bugs here',
+      'Agreed - no issues found',
+    ]) {
+      assert.equal(confirms(reply), false, `counted as acceptance: ${reply}`);
+    }
+  });
+
+  test('a reply that says a change was made is an acceptance', () => {
+    for (const reply of [
+      'Fixed in abc1234: added the assertion.',
+      'Good catch, done in def5678.',
+      'Addressed — the guard now returns early.',
+      'Agreed, and fixed in 0a13889.',
+    ]) {
+      assert.equal(confirms(reply), true, `not counted as acceptance: ${reply}`);
+    }
+  });
+});

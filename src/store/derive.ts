@@ -50,7 +50,7 @@ const ACCEPTANCE = /^\s*(fixed|done|good catch|thanks|addressed|resolved|applied
 // "agreed" every one of them was filed as a confirmed finding and none was
 // recorded as rejected. The reviewer was being taught that its own withdrawn
 // hypotheses land well.
-const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug)\b/i;
+const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug|no issue)s?\b/i;
 const confirms = (body: string) => ACCEPTANCE.test(body) && !DECLINED.test(body.slice(0, 200));
 
 export async function deriveMemory(

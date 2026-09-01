@@ -25,7 +25,7 @@ const ACCEPTANCE = /^\s*(fixed|done|good catch|thanks|addressed|resolved|applied
 // Kept in step with src/store/derive.ts on purpose: what the benchmark counts
 // as accepted has to be what the reviewer learns from, or the two drift and the
 // score starts measuring the gap between two graders.
-const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug)\b/i;
+const DECLINED = /\b(no change|no defect|no action|nothing to change|not fixing|already (fixed|covered|present|handled)|no bug|no issue)s?\b/i;
 const confirms = (body) => ACCEPTANCE.test(body) && !DECLINED.test(body.slice(0, 200));
 const BOT = /reviewpass/i;
 
