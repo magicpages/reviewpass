@@ -1,0 +1,97 @@
+# reviewpass reviews its own pull requests.
+#
+name: reviewpass
+
+# Two kinds of event, two kinds of work.
+#
+#   a push  -> re-read the code and review it
+#   a reply -> re-read the argument and answer it
+#
+# They are separate because folding them together meant a reply either triggered
+# a whole re-review, spending minutes of model time to say nothing about what was
+# actually said, or was silently mined for learnings and never answered at all.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Every reply to a review comment, with no `@reviewpass` needed. A maintainer
+  # correcting a finding should not have to summon the thing that posted it.
+  # Replies to threads reviewpass did not open resolve to no rebuttal and the
+  # job ends in seconds, which is cheaper than making people remember a mention.
+  pull_request_review_comment:
+    types: [created]
+  # Commands: `@reviewpass review`, `@reviewpass full review`, `@reviewpass help`.
+  # Set the REVIEWPASS_MENTION repository variable to your App's name, without a
+  # leading `@`, if it is not `reviewpass`. Do not reach for `lowercase()` or
+  # `replace()` — expressions have neither, and `contains()` already ignores
+  # case, because GitHub ignores case when comparing strings.
+  # The name here must match your App's — an App registered as `acme-review`
+  # answers to `@acme-review` and ignores anything else, so change both this
+  # filter and the one in the job below if yours differs.
+  issue_comment:
+    types: [created]
+
+concurrency:
+  # Keyed on the pull request, so a superseded push does not queue behind a
+  # stale run. Replies are *not* cancelled in progress: two maintainers
+  # answering two findings at once are two conversations, not a race.
+  # The comment id is part of the key so two maintainers answering two findings
+  # run in parallel. Without it every reply on a pull request shares one group
+  # and queues behind the last, which is the opposite of what the line below
+  # says. Empty for push events, which is what makes them coalesce.
+  group: reviewpass-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}-${{ github.event.comment.id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    # Same-repository pull requests, and commands only from people who could
+    # already push here. This repository is public, so anyone can open a pull
+    # request from a fork.
+    #
+    # The two events are not equally safe and cannot share one test. A fork's
+    # `pull_request` run is starved of secrets by GitHub, so its worst case is a
+    # red run. An `issue_comment` is not: it fires in *this* repository's
+    # context with every secret present, whoever wrote the comment and whatever
+    # pull request it sits under. `github.event.pull_request` does not exist on
+    # that event either, so a head-repository test does not fail there - it
+    # passes silently, which is how a workflow that says "same repository only"
+    # ends up running for anyone who can type. What settles it there is who is
+    # speaking, not where the branch lives.
+    if: >
+      (github.event.pull_request.head.repo.full_name == github.repository
+       || (github.event_name == 'issue_comment'
+           && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
+      &&
+      ((github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || (github.event_name == 'pull_request_review_comment'
+          && (github.event.comment.in_reply_to_id != null
+              || contains(github.event.comment.body, format('@{0}', vars.REVIEWPASS_MENTION || 'reviewpass'))))
+      || (github.event_name == 'issue_comment'
+          && github.event.issue.pull_request != null
+          && contains(github.event.comment.body, format('@{0}', vars.REVIEWPASS_MENTION || 'reviewpass'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      # Required: the code graph and the context engine read the working tree.
+      # A shallow checkout is fine.
+      # Pinned to a commit: tags are mutable, so `@v4` trusts whoever can move it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned like the checkout above. The reasoning that makes a mutable tag
+      # a risk does not stop applying because the action is your own.
+      - uses: magicpages/reviewpass@3f1f9145c82fe6fe5fc5242efd8c0fbd9ddd73bf # v1.5.0
+        with:
+          # Posting as your own App makes approvals count toward branch
+          # protection; github-actions[bot] approvals never do. Drop these two
+          # lines to fall back to the default token, which comments but cannot
+          # gate a merge. `npx @magicpages/reviewpass init-app` creates the App.
+          app-id: ${{ secrets.REVIEWPASS_APP_ID }}
+          private-key: ${{ secrets.REVIEWPASS_PRIVATE_KEY }}
+        env:
+          REVIEWPASS_API_KEY: ${{ secrets.REVIEWPASS_API_KEY }}
+          REVIEWPASS_ENDPOINT: https://openrouter.ai/api/v1
+          # Your source is sent to whichever provider serves the request.
+          REVIEWPASS_ZDR: '1'
