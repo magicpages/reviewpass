@@ -358,3 +358,54 @@ export function testedSymbols(root: string): Set<string> {
   }
   return out;
 }
+
+/**
+ * Schema fields the data layer declares mandatory.
+ *
+ * A reviewer that sees `record.lockedAt.toISOString()` and asks for a null
+ * guard is reasoning from the call site alone. Whether the value can be absent
+ * is settled two files away, in the schema, and the schema is in the
+ * repository: `lockedAt: { type: Date, required: true }`. On one pull request
+ * that same question was raised four times about four fields, all four of them
+ * required, and all four answers were the same paragraph written out again.
+ *
+ * Deliberately narrow. Only a field declared required on one line, in a file
+ * that looks like a model, counts - the aim is to settle the obvious cases
+ * without pretending to understand every schema dialect. A field this does not
+ * find is simply not settled, and the finding survives.
+ */
+export function requiredSchemaFields(root: string): Set<string> {
+  const out = new Set<string>();
+  const files = listSourceFiles(root).filter((p) => /(\/models?\/|\.model\.|schema)/i.test(p));
+  for (const rel of files.slice(0, 400)) {
+    let text: string;
+    try { text = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
+    for (const m of text.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:\s*\{[^}\n]*\brequired\s*:\s*true\b[^}\n]*\}/gm)) {
+      const name = m[1];
+      if (name) out.add(name);
+    }
+    // A subdocument whose every field is required cannot arrive half-written
+    // either, and that is the shape the question usually takes: not "can this
+    // date be null" but "can this block record exist with only some of its
+    // fields". Named schemas are matched by their variable, so
+    // `const LockRecordSchema = new Schema({ ... })` settles
+    // `lockRecord` as well as its leaves.
+    for (const m of text.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+(?:mongoose\.)?Schema\s*(?:<[^>]*>)?\s*\(\s*\{([\s\S]*?)\n\s*\}/g)) {
+      const [, varName, bodyText] = m;
+      if (!varName || !bodyText) continue;
+      const fields = [...bodyText.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:\s*\{/gm)];
+      if (!fields.length) continue;
+      const allRequired = fields.every((f) => {
+        const from = bodyText.indexOf(f[0]);
+        const line = bodyText.slice(from, bodyText.indexOf('\n', from + 1));
+        return /\brequired\s*:\s*true\b/.test(line);
+      });
+      if (!allRequired) continue;
+      // `LockRecordSchema` -> `lockRecord`
+      const stem = varName.replace(/Schema$/, '');
+      out.add(stem);
+      out.add(stem.charAt(0).toLowerCase() + stem.slice(1));
+    }
+  }
+  return out;
+}

@@ -10,7 +10,7 @@ import { selectFiles, groupFiles } from './context/select.js';
 import { mineInstructions, rulesFor } from './context/instructions.js';
 import { gatherContext, describeBackend, contextBudgetFor, filesNamedIn } from './context/retrieve.js';
 import { buildIndex, listSourceFiles } from './graph/index.js';
-import { runTools, toolFindingsFor , typeStrictness, testedSymbols } from './context/tools.js';
+import { runTools, toolFindingsFor , typeStrictness, testedSymbols, requiredSchemaFields } from './context/tools.js';
 import { scopesFor, type RecordedFinding } from './store/common.js';
 import { FileLearningStore } from './store/file-learnings.js';
 import { deriveMemory } from './store/derive.js';
@@ -20,7 +20,7 @@ import { rerankOverChange } from './store/rerank.js';
 import { symbolsInPatch } from './context/retrieve.js';
 import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
-  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves,
+  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves, guardsImpossibleState,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
@@ -505,9 +505,22 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   // eight times, because by the time a review runs the author has already
   // written the tests for the change. Dropped here rather than at verification:
   // the verifier shares the finder's blind spot and upheld every one of them.
+  // A guard asked for on a field the schema declares mandatory. The largest
+  // class of rejections in the corpus, and decidable from one line of schema.
+  const required = requiredSchemaFields(workspace);
+  const beforeGuards = evidenced.length;
+  const notImpossible = evidenced.filter((f) => {
+    const field = guardsImpossibleState(f, required);
+    if (field) log.info(`  dropped "${f.title.slice(0, 52)}" — \`${field}\` is required by the schema`);
+    return !field;
+  });
+  if (notImpossible.length < beforeGuards) {
+    log.info(`Dropped ${beforeGuards - notImpossible.length} guard(s) for states the schema forbids`);
+  }
+
   const tested = testedSymbols(workspace);
-  const beforeTests = evidenced.length;
-  const survived = evidenced.filter((f) => {
+  const beforeTests = notImpossible.length;
+  const survived = notImpossible.filter((f) => {
     const sym = redundantTestRequest(f, tested);
     if (sym) log.info(`  dropped "${f.title.slice(0, 56)}" — \`${sym}\` is already exercised by the suite`);
     return !sym;

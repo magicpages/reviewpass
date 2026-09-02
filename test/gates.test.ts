@@ -25,7 +25,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { collapseNearDuplicates, redundantTestRequest, citationResolves } from '../src/review/run.js';
+import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
 import type { Finding } from '../src/types.js';
 
 const finding = (over: Partial<Finding>): Finding => ({
@@ -243,5 +243,60 @@ describe('reply classification', () => {
     ]) {
       assert.equal(confirms(reply), true, `not counted as acceptance: ${reply}`);
     }
+  });
+});
+
+describe('guardsImpossibleState', () => {
+  /**
+   * The biggest class of rejected findings: a guard demanded for a state the
+   * schema does not permit. The phrasing alone is a weak signal — findings
+   * worded this way are accepted about as often as any other — so the trigger
+   * is broad and every bit of the discrimination comes from the schema.
+   */
+  const required = new Set(['lockedAt', 'method', 'lockRecord']);
+
+  test('drops a null guard on a field the schema declares required', () => {
+    assert.equal(
+      guardsImpossibleState(
+        { title: 'Handle potential null `lockedAt` before calling toISOString()', body: '' },
+        required),
+      'lockedAt');
+  });
+
+  test('drops a partial-shape guard on an all-required subdocument', () => {
+    assert.equal(
+      guardsImpossibleState(
+        { title: 'Handle the case where account.lockRecord has an unexpected shape', body: '' },
+        required),
+      'lockRecord');
+  });
+
+  test('keeps a guard on a field the schema does not require', () => {
+    assert.equal(
+      guardsImpossibleState(
+        { title: 'Handle potential null `nickname` before calling trim()', body: '' },
+        required),
+      null, 'an optional field is a real guard and must survive');
+  });
+
+  test('keeps a finding that is not asking for a guard', () => {
+    // The trigger is broad on purpose; it must still not catch everything that
+    // happens to mention a required field.
+    for (const title of [
+      'Rename `lockedAt` to `blockedOn` for consistency',
+      'Assert `method` is included in the response payload',
+      'Index `lockedAt` so the cleanup query does not scan',
+    ]) {
+      assert.equal(guardsImpossibleState({ title, body: '' }, required), null,
+        `wrongly treated as an impossible-state guard: ${title}`);
+    }
+  });
+
+  test('does nothing when no schema was indexed', () => {
+    // An empty index means the scan found no models, not that nothing is
+    // required. Failing open is the only safe direction for a gate that drops.
+    assert.equal(
+      guardsImpossibleState({ title: 'Handle potential null `lockedAt`', body: '' }, new Set()),
+      null);
   });
 });
