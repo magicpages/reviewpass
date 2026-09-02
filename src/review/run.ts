@@ -972,3 +972,46 @@ export function citationResolves(
   // A quote is either in the file or it is not.
   return { ok: false, why: `quoted line is not in ${path} near :${line}` };
 }
+
+/**
+ * A guard demanded for a state the schema does not permit.
+ *
+ * The largest single class of rejected findings, across 156 of them: the
+ * reviewer sees `record.lockedAt.toISOString()` and asks what happens when
+ * `lockedAt` is null. Whether it can be null is not decided at the call site.
+ * It is decided two files away, in one line of schema that is sitting in the
+ * repository - `lockedAt: { type: Date, required: true }` - and on one pull
+ * request the same question was asked four times about four required fields,
+ * drawing the same paragraph in reply four times.
+ *
+ * The wording is a weak signal on its own: findings phrased this way are
+ * accepted about as often as any other, so a gate keyed on phrasing alone
+ * removes as much signal as noise. The discrimination comes entirely from the
+ * schema, which is why the trigger is broad and the condition is narrow: a
+ * field that is not found required simply is not settled, and the finding
+ * stands.
+ */
+const ASKS_FOR_A_GUARD =
+  /\b(guard|handle|check|validate)\b[\s\S]{0,90}\b(null|undefined|missing|absent|partial|incomplete|unexpected shape|not set)\b|\bpotential(ly)? (null|undefined)\b|\bmay be (null|undefined)\b/i;
+
+export function guardsImpossibleState(
+  finding: { title: string; body: string },
+  requiredFields: Set<string> | undefined,
+): string | null {
+  if (!requiredFields?.size) return null;
+  const text = `${finding.title} ${finding.body.slice(0, 300)}`;
+  if (!ASKS_FOR_A_GUARD.test(text)) return null;
+
+  // A field is named either in backticks or as a bare dotted path; the claim is
+  // about the last segment, since `account.lockRecord` is a claim
+  // about `lockRecord`.
+  const named = [
+    ...[...text.matchAll(/`([A-Za-z_$][\w$.]*)`/g)].map((m) => m[1] ?? ''),
+    ...[...text.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\b/g)].map((m) => m[1] ?? ''),
+  ].map((n) => n.split('.').pop() ?? '');
+
+  for (const sym of named) {
+    if (sym.length >= 4 && requiredFields.has(sym)) return sym;
+  }
+  return null;
+}
