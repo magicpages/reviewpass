@@ -20,7 +20,7 @@ import { rerankOverChange } from './store/rerank.js';
 import { symbolsInPatch } from './context/retrieve.js';
 import {
   findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
-  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves, guardsImpossibleState,
+  collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves, guardsImpossibleState, alreadySpokenHere,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
@@ -505,11 +505,24 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   // eight times, because by the time a review runs the author has already
   // written the tests for the change. Dropped here rather than at verification:
   // the verifier shares the finder's blind spot and upheld every one of them.
+  // Code this review has already commented on, in an earlier round. Not by
+  // wording — the reversal that prompted this shared no phrasing with the note
+  // it undid and sat two lines away.
+  const beforeSpoken = evidenced.length;
+  const unspoken = evidenced.filter((f) => {
+    if (!alreadySpokenHere(f, prior.spokenAt)) return true;
+    log.info(`  dropped "${f.title.slice(0, 52)}" — already commented on these lines this round`);
+    return false;
+  });
+  if (unspoken.length < beforeSpoken) {
+    log.info(`Dropped ${beforeSpoken - unspoken.length} finding(s) on code already commented on`);
+  }
+
   // A guard asked for on a field the schema declares mandatory. The largest
   // class of rejections in the corpus, and decidable from one line of schema.
   const required = requiredSchemaFields(workspace);
-  const beforeGuards = evidenced.length;
-  const notImpossible = evidenced.filter((f) => {
+  const beforeGuards = unspoken.length;
+  const notImpossible = unspoken.filter((f) => {
     const field = guardsImpossibleState(f, required);
     if (field) log.info(`  dropped "${f.title.slice(0, 52)}" — \`${field}\` is required by the schema`);
     return !field;

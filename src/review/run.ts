@@ -1015,3 +1015,32 @@ export function guardsImpossibleState(
   }
   return null;
 }
+
+/**
+ * A second comment on code the reviewer already spoke about.
+ *
+ * A human reviewer does not return to the same four lines a round later with a
+ * differently worded version of the note the author has just acted on. This
+ * one did: it asked for a guard against an empty array, the author wrote it,
+ * and the next round it asked for the opposite - having no memory of the first
+ * ask, because memory recorded rejections and never recorded what was accepted.
+ *
+ * Suppressing by anchor rather than by wording is the point. The two comments
+ * shared no phrasing and sat two lines apart, so every check that compares text
+ * or buckets line numbers let the second one through.
+ *
+ * The window is deliberately tight. A fix can genuinely introduce a new defect
+ * on the same lines, and that finding should still be raised; what this stops
+ * is the reviewer circling the exact spot it has already been answered on.
+ */
+export function alreadySpokenHere(
+  finding: { path: string; startLine: number; endLine: number },
+  spokenAt: { path: string; line: number }[] | undefined,
+  window = 4,
+): boolean {
+  if (!spokenAt?.length) return false;
+  return spokenAt.some((s) =>
+    s.path === finding.path
+    && s.line >= finding.startLine - window
+    && s.line <= finding.endLine + window);
+}

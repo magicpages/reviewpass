@@ -25,7 +25,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
+import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState, alreadySpokenHere } from '../src/review/run.js';
 import type { Finding } from '../src/types.js';
 
 const finding = (over: Partial<Finding>): Finding => ({
@@ -298,5 +298,41 @@ describe('guardsImpossibleState', () => {
     assert.equal(
       guardsImpossibleState({ title: 'Handle potential null `lockedAt`', body: '' }, new Set()),
       null);
+  });
+});
+
+describe('alreadySpokenHere', () => {
+  /**
+   * A review asked for a guard, the author wrote it, and the next round the
+   * review asked for the opposite — with no memory of the first ask, because
+   * memory recorded rejections and never recorded what was accepted. The two
+   * comments shared no wording and sat two lines apart, so nothing that
+   * compares text or buckets lines could catch it.
+   */
+  const spoken = [{ path: 'src/panel.tsx', line: 166 }, { path: 'src/other.ts', line: 40 }];
+
+  test('drops a second comment a couple of lines from the first', () => {
+    assert.equal(
+      alreadySpokenHere({ path: 'src/panel.tsx', startLine: 164, endLine: 164 }, spoken), true);
+  });
+
+  test('keeps a comment far enough away to be about other code', () => {
+    assert.equal(
+      alreadySpokenHere({ path: 'src/panel.tsx', startLine: 120, endLine: 120 }, spoken), false);
+  });
+
+  test('keeps the same lines in a different file', () => {
+    assert.equal(
+      alreadySpokenHere({ path: 'src/elsewhere.tsx', startLine: 166, endLine: 166 }, spoken), false);
+  });
+
+  test('does nothing on a first review', () => {
+    assert.equal(alreadySpokenHere({ path: 'src/panel.tsx', startLine: 166, endLine: 166 }, []), false);
+    assert.equal(alreadySpokenHere({ path: 'src/panel.tsx', startLine: 166, endLine: 166 }, undefined), false);
+  });
+
+  test('a range that spans the earlier anchor counts as the same place', () => {
+    assert.equal(
+      alreadySpokenHere({ path: 'src/panel.tsx', startLine: 160, endLine: 170 }, spoken), true);
   });
 });

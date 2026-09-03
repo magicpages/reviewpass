@@ -54,6 +54,8 @@ export interface ExistingReview {
    * finding still waiting for an answer.
    */
   openFindings: number;
+  /** Anchors where a finding was already posted on this pull request. */
+  spokenAt: { path: string; line: number }[];
 }
 
 /** One of our findings that a maintainer answered and we have not answered back. */
@@ -218,6 +220,12 @@ export class GitHubClient {
   /** What reviewpass has already said on this PR — the basis for not repeating itself. */
   async loadExistingReview(number: number): Promise<ExistingReview> {
     const fingerprints = new Set<string>();
+    // Where it has already spoken, not just what it said. A fingerprint is the
+    // path, the title and a line bucket, so the same complaint reworded a few
+    // lines away hashes differently and posts again - which is how a review
+    // came to ask an author to undo the change it had asked for in the previous
+    // round, after the author had made it.
+    const spokenAt: { path: string; line: number }[] = [];
     let lastReviewedSha: string | undefined;
     let walkthroughCommentId: number | undefined;
 
@@ -227,6 +235,9 @@ export class GitHubClient {
     for (const c of comments) {
       const m = FINDING_RE.exec(c.body ?? '');
       if (m) fingerprints.add(m[1]!);
+      if (m && c.path && (c.line ?? c.original_line)) {
+        spokenAt.push({ path: c.path, line: (c.line ?? c.original_line) as number });
+      }
     }
 
     const issueComments = await this.kit.paginate(this.kit.rest.issues.listComments, {
@@ -239,7 +250,7 @@ export class GitHubClient {
     }
 
     return {
-      fingerprints, lastReviewedSha, walkthroughCommentId,
+      fingerprints, spokenAt, lastReviewedSha, walkthroughCommentId,
       openFindings: await this.countOpenFindings(number),
     };
   }
