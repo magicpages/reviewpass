@@ -27,6 +27,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
 import type { Finding } from '../src/types.js';
+import { classifyBlocker } from '../src/model/blocked.js';
 
 const finding = (over: Partial<Finding>): Finding => ({
   path: 'src/service.ts', startLine: 10, endLine: 10, severity: 'minor',
@@ -298,5 +299,43 @@ describe('guardsImpossibleState', () => {
     assert.equal(
       guardsImpossibleState({ title: 'Handle potential null `lockedAt`', body: '' }, new Set()),
       null);
+  });
+});
+
+describe('keyShapeHint via classifyBlocker', () => {
+  /**
+   * A rejected key is usually the wrong kind of key, not a typo, and the kind
+   * shows in the shape. The value must never appear in the message — this
+   * string is posted to a pull request.
+   */
+  const rejection = new Error('model 401: {"error":{"message":"Unauthorized"}}');
+  const withKey = (key: string) => {
+    const before = process.env.REVIEWPASS_API_KEY;
+    process.env.REVIEWPASS_API_KEY = key;
+    try { return classifyBlocker(rejection)?.message ?? ''; }
+    finally { if (before === undefined) delete process.env.REVIEWPASS_API_KEY; else process.env.REVIEWPASS_API_KEY = before; }
+  };
+
+  test('names an SSH public key pasted as a bearer token', () => {
+    const m = withKey('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexamplekeymaterial');
+    assert.match(m, /SSH public key/);
+  });
+
+  test('names whitespace a browser copy added', () => {
+    assert.match(withKey('  abcdef0123456789abcdef  '), /whitespace/);
+  });
+
+  test('names a key belonging to a different endpoint', () => {
+    assert.match(withKey('sk-or-v1-abcdef0123456789abcdef'), /OpenRouter/);
+  });
+
+  test('says nothing extra about a well-formed key', () => {
+    const m = withKey('abcdef0123456789abcdef0123456789');
+    assert.equal(m, 'The model API key was rejected, so nothing was reviewed.');
+  });
+
+  test('never repeats the key itself', () => {
+    const secret = 'ssh-ed25519 AAAAsupersecretkeymaterialdonotleak';
+    assert.ok(!withKey(secret).includes('supersecret'), 'the key value must not reach the message');
   });
 });

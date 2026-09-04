@@ -70,6 +70,9 @@ export class ModelClient {
    * realistic failure is an empty body when the thinking budget swallowed the
    * whole generation — which is why maxTokens is generous and we retry once.
    */
+  /** One warning per process, not one per request. */
+  private static warnedAboutProvider = false;
+
   async json<T>(messages: ChatMessage[], schema: object, opts: CallOptions = {}): Promise<CallResult<T>> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -129,8 +132,26 @@ export class ModelClient {
       ?? (zdrMode === '1' || zdrMode === 'true' || zdrMode === 'strict' || zdrPreferred
         ? { zdr: true }
         : undefined);
-    if (provider && Object.keys(provider).length) body.provider = provider;
+    // `provider` is OpenRouter's routing field and nothing else understands it.
+    // Sent to Ollama, an OpenAI-compatible gateway or a llama.cpp server it is
+    // at best ignored and at worst a 400, and the zero-retention promise it is
+    // asked to carry would be silently untrue - which is the worst of the three
+    // outcomes. Say so once, and send a request the endpoint can actually serve.
+    const endpointBase = this.cfg.model.endpoint;
+    const routesThroughOpenRouter = /openrouter\.ai/i.test(endpointBase);
+    if (provider && Object.keys(provider).length) {
+      if (routesThroughOpenRouter) {
+        body.provider = provider;
+      } else if (!ModelClient.warnedAboutProvider) {
+        ModelClient.warnedAboutProvider = true;
+        console.error(
+          `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
+          + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
+        );
+      }
+    }
     let droppedZdr = false;
+    let loosenedFormat = false;
 
     let lastErr: unknown;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -152,6 +173,22 @@ export class ModelClient {
           const text = await res.text();
           // A model swap on a 2-slot router shows up as a 503 for a few seconds.
           if (res.status === 503 || res.status >= 500) throw new Error(`upstream ${res.status}: ${text.slice(0, 200)}`);
+          // Not every OpenAI-compatible server implements the strict
+          // `json_schema` form; several accept only `json_object`, and one that
+          // does not rejects every request the reviewer makes. Ask once for the
+          // looser form rather than failing a whole review over the shape of
+          // the constraint — `salvageJson` already copes with a reply no
+          // grammar policed.
+          if (!loosenedFormat && body.response_format
+            && /response_format|json_schema|schema/i.test(text)) {
+            loosenedFormat = true;
+            body.response_format = { type: 'json_object' };
+            console.error(
+              `  ${endpoint} rejected a strict json_schema response format; retrying with json_object. `
+              + 'Findings are salvaged from the reply rather than grammar-constrained.',
+            );
+            continue;
+          }
           throw Object.assign(new Error(`model ${res.status}: ${text.slice(0, 300)}`), { fatal: true });
         }
         const json = (await res.json()) as ChatResponse;
