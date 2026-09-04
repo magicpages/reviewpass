@@ -70,6 +70,9 @@ export class ModelClient {
    * realistic failure is an empty body when the thinking budget swallowed the
    * whole generation — which is why maxTokens is generous and we retry once.
    */
+  /** One warning per process, not one per request. */
+  private static warnedAboutProvider = false;
+
   async json<T>(messages: ChatMessage[], schema: object, opts: CallOptions = {}): Promise<CallResult<T>> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -129,7 +132,24 @@ export class ModelClient {
       ?? (zdrMode === '1' || zdrMode === 'true' || zdrMode === 'strict' || zdrPreferred
         ? { zdr: true }
         : undefined);
-    if (provider && Object.keys(provider).length) body.provider = provider;
+    // `provider` is OpenRouter's routing field and nothing else understands it.
+    // Sent to Ollama, an OpenAI-compatible gateway or a llama.cpp server it is
+    // at best ignored and at worst a 400, and the zero-retention promise it is
+    // asked to carry would be silently untrue - which is the worst of the three
+    // outcomes. Say so once, and send a request the endpoint can actually serve.
+    const endpointBase = this.cfg.model.endpoint;
+    const routesThroughOpenRouter = /openrouter\.ai/i.test(endpointBase);
+    if (provider && Object.keys(provider).length) {
+      if (routesThroughOpenRouter) {
+        body.provider = provider;
+      } else if (!ModelClient.warnedAboutProvider) {
+        ModelClient.warnedAboutProvider = true;
+        console.error(
+          `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
+          + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
+        );
+      }
+    }
     let droppedZdr = false;
 
     let lastErr: unknown;
