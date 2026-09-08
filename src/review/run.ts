@@ -747,18 +747,31 @@ export async function summarise(
   // as `undefined.toLowerCase()` and took down a review that had otherwise
   // finished — after the findings were computed, so the whole run was lost to a
   // summary line.
+  // Types are checked, not just presence. `salvageJson` recovers whatever
+  // parses out of a truncated reply, so a field can be absent, of the wrong
+  // type, or the right type with the wrong shape - and a default that assumes
+  // "present means string" throws on the second of those exactly like the bug
+  // this guards against.
+  const str = (v: unknown, fallback: string) =>
+    (typeof v === 'string' && v.trim() ? v.trim() : fallback);
   const RISKS = ['minimal', 'low', 'moderate', 'high'] as const;
   const risk = RISKS.find((r) => r === value?.merge_risk) ?? 'moderate';
   const score = Number(value?.effort_score);
   return {
-    summary: value?.summary?.trim() || 'Summary unavailable.',
-    groups: (value?.groups ?? []).filter((g) => g && typeof g.label === 'string'),
+    summary: str(value?.summary, 'Summary unavailable.'),
+    // Every field the walkthrough table reads, not only the one it keys on: it
+    // calls `g.files.map(...)` and prints `g.summary`, so a group carrying a
+    // label and nothing else crashes the render just as surely.
+    groups: (Array.isArray(value?.groups) ? value.groups : [])
+      .filter((g): g is { label: string; summary: string; files: string[] } =>
+        !!g && typeof g.label === 'string' && typeof g.summary === 'string'
+        && Array.isArray(g.files) && g.files.every((f: unknown) => typeof f === 'string')),
     effort: {
       score: Number.isFinite(score) ? Math.min(5, Math.max(1, Math.round(score))) : 3,
-      label: value?.effort_label?.trim() || 'Moderate',
+      label: str(value?.effort_label, 'Moderate'),
     },
     mergeRisk: risk,
-    mergeRiskReason: value?.merge_risk_reason ?? '',
+    mergeRiskReason: str(value?.merge_risk_reason, ''),
   };
 }
 
