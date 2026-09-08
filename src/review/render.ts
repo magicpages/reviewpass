@@ -44,7 +44,10 @@ export function renderWalkthrough(pr: PullRequestContext, r: ReviewResult): stri
   }
 
   out.push(
-    `Review effort ${r.effort.score}/5 (${r.effort.label.toLowerCase()}) · merge risk ${RISK_LABEL[r.mergeRisk]}`,
+    // Defensive on purpose. The findings are the review; a decorative line
+    // about effort must not be able to throw away a run that produced them.
+    `Review effort ${r.effort?.score ?? 3}/5 (${(r.effort?.label ?? 'moderate').toLowerCase()})`
+      + ` · merge risk ${RISK_LABEL[r.mergeRisk] ?? 'moderate'}`,
     '',
   );
 

@@ -740,12 +740,25 @@ export async function summarise(
     { schemaName: 'walkthrough', maxTokens: 3072 },
   );
 
+  // Every field defaulted, because the reply is not always the shape the schema
+  // asked for. A thinking model that spends its whole budget before the first
+  // JSON byte returns nothing, and what `salvageJson` recovers from a truncated
+  // reply can be missing any key. One absent `effort_label` reached the renderer
+  // as `undefined.toLowerCase()` and took down a review that had otherwise
+  // finished — after the findings were computed, so the whole run was lost to a
+  // summary line.
+  const RISKS = ['minimal', 'low', 'moderate', 'high'] as const;
+  const risk = RISKS.find((r) => r === value?.merge_risk) ?? 'moderate';
+  const score = Number(value?.effort_score);
   return {
-    summary: value.summary,
-    groups: value.groups ?? [],
-    effort: { score: value.effort_score, label: value.effort_label },
-    mergeRisk: value.merge_risk,
-    mergeRiskReason: value.merge_risk_reason,
+    summary: value?.summary?.trim() || 'Summary unavailable.',
+    groups: (value?.groups ?? []).filter((g) => g && typeof g.label === 'string'),
+    effort: {
+      score: Number.isFinite(score) ? Math.min(5, Math.max(1, Math.round(score))) : 3,
+      label: value?.effort_label?.trim() || 'Moderate',
+    },
+    mergeRisk: risk,
+    mergeRiskReason: value?.merge_risk_reason ?? '',
   };
 }
 

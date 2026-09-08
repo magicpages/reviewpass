@@ -26,6 +26,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
+import { renderWalkthrough } from '../src/review/render.js';
 import type { Finding } from '../src/types.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
@@ -337,5 +338,35 @@ describe('keyShapeHint via classifyBlocker', () => {
   test('never repeats the key itself', () => {
     const secret = 'ssh-ed25519 AAAAsupersecretkeymaterialdonotleak';
     assert.ok(!withKey(secret).includes('supersecret'), 'the key value must not reach the message');
+  });
+});
+
+describe('a partial walkthrough must not lose the review', () => {
+  /**
+   * A thinking model that spends its budget before the first JSON byte returns
+   * nothing, and what is salvaged from a truncated reply can be missing any
+   * key. One absent `effort_label` reached the walkthrough as
+   * `undefined.toLowerCase()` and threw away a run whose findings were already
+   * computed — a decorative line killed the review it was decorating.
+   */
+  const pr = { number: 1, title: 't', body: '', files: [], headSha: 'abc' } as never;
+  const base = {
+    findings: [], fileGroups: [], checks: [], walkthrough: 'x',
+    mergeRisk: 'moderate', mergeRiskReason: '', event: 'COMMENT',
+    reviewedFiles: 1, failedFiles: 0, openFindings: 0, skipped: [],
+  };
+  const render = (over: object) =>
+    renderWalkthrough(pr, { ...base, ...over } as never);
+
+  test('renders when effort is missing entirely', () => {
+    assert.doesNotThrow(() => render({ effort: undefined }));
+  });
+
+  test('renders when the effort label is missing', () => {
+    assert.match(render({ effort: { score: 2 } }), /Review effort 2\/5/);
+  });
+
+  test('renders when the merge risk is not a known value', () => {
+    assert.doesNotThrow(() => render({ effort: { score: 3, label: 'Moderate' }, mergeRisk: 'wat' }));
   });
 });
