@@ -75,6 +75,20 @@ jobs:
           private-key: ${{ secrets.REVIEWPASS_PRIVATE_KEY }}
         env:
           REVIEWPASS_API_KEY: ${{ secrets.REVIEWPASS_API_KEY }}
+          # Any OpenAI-compatible /chat/completions endpoint. Three settings
+          # move together and swapping only one of them is the usual mistake:
+          # the key belongs to the endpoint, and the model names belong to the
+          # endpoint too. An OpenRouter model name is not an Ollama model name.
+          #
+          #   OpenRouter   https://openrouter.ai/api/v1   deepseek/deepseek-v4-flash
+          #   Ollama Cloud https://ollama.com/v1          qwen3-coder:480b
+          #   llama.cpp    http://your-host:8080/v1       whatever alias it serves
           REVIEWPASS_ENDPOINT: https://openrouter.ai/api/v1
           # Your source is sent to whichever provider serves the request.
+          #
+          # OpenRouter only. This is that broker's provider-routing field, so it
+          # means nothing to Ollama, to llama.cpp, or to a gateway of your own,
+          # and pointing REVIEWPASS_ENDPOINT elsewhere while leaving this set
+          # would carry a retention promise nothing is keeping. It is ignored
+          # with a warning off OpenRouter rather than silently honoured.
           REVIEWPASS_ZDR: '1'

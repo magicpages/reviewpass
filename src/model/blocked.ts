@@ -19,6 +19,33 @@ export interface Blocker {
 
 const CREDITS = /insufficient credits|quota|billing|payment required/i;
 
+/**
+ * What is wrong with the key, when the shape gives it away.
+ *
+ * A rejected key is usually the wrong *kind* of key rather than a typo, and the
+ * kind is visible without looking at the value. Ollama calls both an Ed25519
+ * public key and a bearer token an "API key" in its interface and only one of
+ * them works over HTTP; a key for one broker pasted against another's endpoint
+ * is the other common case. Both cost a person real time to find from the word
+ * "unauthorized" alone.
+ *
+ * The key is never printed. Prefixes are matched and characters are counted;
+ * the value goes nowhere, because this string is posted to a pull request.
+ */
+function keyShapeHint(): string {
+  const key = process.env.REVIEWPASS_API_KEY ?? process.env.WARREN_API_KEY ?? '';
+  if (!key) return ' No API key is set.';
+  if (/^ssh-(ed25519|rsa)\b/.test(key)) {
+    return ' The key looks like an SSH public key rather than a bearer token'
+      + ' — some providers list both under the same heading and only one works over HTTP.';
+  }
+  if (key !== key.trim()) return ' The key has leading or trailing whitespace, which copying from a browser often adds.';
+  if (/\s/.test(key)) return ' The key contains a space or newline, so it was probably wrapped or truncated when copied.';
+  if (/^sk-or-/.test(key)) return ' The key is an OpenRouter key; check it matches the endpoint it is being sent to.';
+  if (key.length < 20) return ` The key is only ${key.length} characters, shorter than any provider issues.`;
+  return '';
+}
+
 export function classifyBlocker(err: unknown): Blocker | null {
   const text = err instanceof Error ? err.message : String(err);
   const status = /model (\d{3}):/.exec(text)?.[1];
@@ -27,7 +54,7 @@ export function classifyBlocker(err: unknown): Blocker | null {
     return { message: 'The model account is out of credits, so nothing was reviewed.' };
   }
   if (status === '401' || status === '403') {
-    return { message: 'The model API key was rejected, so nothing was reviewed.' };
+    return { message: `The model API key was rejected, so nothing was reviewed.${keyShapeHint()}` };
   }
   if (status === '404') {
     return { message: 'The configured model was not found at this endpoint, so nothing was reviewed.' };
