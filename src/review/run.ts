@@ -740,12 +740,38 @@ export async function summarise(
     { schemaName: 'walkthrough', maxTokens: 3072 },
   );
 
+  // Every field defaulted, because the reply is not always the shape the schema
+  // asked for. A thinking model that spends its whole budget before the first
+  // JSON byte returns nothing, and what `salvageJson` recovers from a truncated
+  // reply can be missing any key. One absent `effort_label` reached the renderer
+  // as `undefined.toLowerCase()` and took down a review that had otherwise
+  // finished — after the findings were computed, so the whole run was lost to a
+  // summary line.
+  // Types are checked, not just presence. `salvageJson` recovers whatever
+  // parses out of a truncated reply, so a field can be absent, of the wrong
+  // type, or the right type with the wrong shape - and a default that assumes
+  // "present means string" throws on the second of those exactly like the bug
+  // this guards against.
+  const str = (v: unknown, fallback: string) =>
+    (typeof v === 'string' && v.trim() ? v.trim() : fallback);
+  const RISKS = ['minimal', 'low', 'moderate', 'high'] as const;
+  const risk = RISKS.find((r) => r === value?.merge_risk) ?? 'moderate';
+  const score = Number(value?.effort_score);
   return {
-    summary: value.summary,
-    groups: value.groups ?? [],
-    effort: { score: value.effort_score, label: value.effort_label },
-    mergeRisk: value.merge_risk,
-    mergeRiskReason: value.merge_risk_reason,
+    summary: str(value?.summary, 'Summary unavailable.'),
+    // Every field the walkthrough table reads, not only the one it keys on: it
+    // calls `g.files.map(...)` and prints `g.summary`, so a group carrying a
+    // label and nothing else crashes the render just as surely.
+    groups: (Array.isArray(value?.groups) ? value.groups : [])
+      .filter((g): g is { label: string; summary: string; files: string[] } =>
+        !!g && typeof g.label === 'string' && typeof g.summary === 'string'
+        && Array.isArray(g.files) && g.files.every((f: unknown) => typeof f === 'string')),
+    effort: {
+      score: Number.isFinite(score) ? Math.min(5, Math.max(1, Math.round(score))) : 3,
+      label: str(value?.effort_label, 'Moderate'),
+    },
+    mergeRisk: risk,
+    mergeRiskReason: str(value?.merge_risk_reason, ''),
   };
 }
 

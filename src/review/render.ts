@@ -34,17 +34,25 @@ export function renderWalkthrough(pr: PullRequestContext, r: ReviewResult): stri
     '',
   );
 
-  if (r.fileGroups.length) {
+  // The summariser defaults what it returns, but it is not the only caller: a
+  // failed walkthrough falls back to a hand-built object and a blocked run to
+  // another. This is the last place before the comment is posted, so it checks
+  // the shape it actually reads rather than trusting whoever assembled it.
+  const groups = (Array.isArray(r.fileGroups) ? r.fileGroups : []).filter((g) => g && g.label);
+  if (groups.length) {
     out.push('| Area | Files | Change |', '|:---|:---|:---|');
-    for (const g of r.fileGroups) {
-      const files = g.files.map((f) => `\`${f}\``).join('<br>');
-      out.push(`| **${escapeCell(g.label)}** | ${files} | ${escapeCell(g.summary)} |`);
+    for (const g of groups) {
+      const files = (Array.isArray(g.files) ? g.files : []).map((f) => `\`${f}\``).join('<br>');
+      out.push(`| **${escapeCell(String(g.label))}** | ${files} | ${escapeCell(String(g.summary ?? ''))} |`);
     }
     out.push('');
   }
 
   out.push(
-    `Review effort ${r.effort.score}/5 (${r.effort.label.toLowerCase()}) · merge risk ${RISK_LABEL[r.mergeRisk]}`,
+    // Defensive on purpose. The findings are the review; a decorative line
+    // about effort must not be able to throw away a run that produced them.
+    `Review effort ${r.effort?.score ?? 3}/5 (${String(r.effort?.label ?? 'moderate').toLowerCase()})`
+      + ` · merge risk ${RISK_LABEL[r.mergeRisk] ?? 'moderate'}`,
     '',
   );
 

@@ -26,6 +26,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
+import { renderWalkthrough } from '../src/review/render.js';
 import type { Finding } from '../src/types.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
@@ -337,5 +338,70 @@ describe('keyShapeHint via classifyBlocker', () => {
   test('never repeats the key itself', () => {
     const secret = 'ssh-ed25519 AAAAsupersecretkeymaterialdonotleak';
     assert.ok(!withKey(secret).includes('supersecret'), 'the key value must not reach the message');
+  });
+});
+
+describe('a partial walkthrough must not lose the review', () => {
+  /**
+   * A thinking model that spends its budget before the first JSON byte returns
+   * nothing, and what is salvaged from a truncated reply can be missing any
+   * key. One absent `effort_label` reached the walkthrough as
+   * `undefined.toLowerCase()` and threw away a run whose findings were already
+   * computed — a decorative line killed the review it was decorating.
+   */
+  const pr = { number: 1, title: 't', body: '', files: [], headSha: 'abc' } as never;
+  const base = {
+    findings: [], fileGroups: [], checks: [], walkthrough: 'x',
+    mergeRisk: 'moderate', mergeRiskReason: '', event: 'COMMENT',
+    reviewedFiles: 1, failedFiles: 0, openFindings: 0, skipped: [],
+  };
+  const render = (over: object) =>
+    renderWalkthrough(pr, { ...base, ...over } as never);
+
+  test('renders when effort is missing entirely', () => {
+    assert.doesNotThrow(() => render({ effort: undefined }));
+  });
+
+  test('renders when the effort label is missing', () => {
+    assert.match(render({ effort: { score: 2 } }), /Review effort 2\/5/);
+  });
+
+  test('renders when the merge risk is not a known value', () => {
+    assert.doesNotThrow(() => render({ effort: { score: 3, label: 'Moderate' }, mergeRisk: 'wat' }));
+  });
+});
+
+describe('a malformed walkthrough group must not crash the render', () => {
+  // Raised by Sourcery on the fix for the missing-label crash: guarding the
+  // label alone is not enough, because the table also maps `files` and prints
+  // `summary`. A group carrying a label and nothing else crashes just as surely.
+  const pr = { number: 1, title: 't', body: '', files: [], headSha: 'abc' } as never;
+  const base = {
+    findings: [], fileGroups: [], checks: [], walkthrough: 'x',
+    effort: { score: 3, label: 'Moderate' },
+    mergeRisk: 'moderate', mergeRiskReason: '', event: 'COMMENT',
+    reviewedFiles: 1, failedFiles: 0, openFindings: 0, skipped: [],
+  };
+
+  test('renders a group whose files are missing', () => {
+    const r = { ...base, fileGroups: [{ label: 'api', summary: 's' }] } as never;
+    assert.doesNotThrow(() => renderWalkthrough(pr, r));
+  });
+
+  test('renders a group whose summary is missing', () => {
+    const r = { ...base, fileGroups: [{ label: 'api', files: ['a.ts'] }] } as never;
+    assert.doesNotThrow(() => renderWalkthrough(pr, r));
+  });
+
+  test('renders when fileGroups is not an array at all', () => {
+    const r = { ...base, fileGroups: undefined } as never;
+    assert.doesNotThrow(() => renderWalkthrough(pr, r));
+  });
+
+  test('renders when the effort label is a number rather than a string', () => {
+    // `value?.effort_label?.trim()` throws on a truthy non-string, which is a
+    // shape `salvageJson` can produce and no schema enforced.
+    const r = { ...base, effort: { score: 3, label: 7 } } as never;
+    assert.doesNotThrow(() => renderWalkthrough(pr, r));
   });
 });
