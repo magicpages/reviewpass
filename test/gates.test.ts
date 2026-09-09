@@ -437,3 +437,34 @@ describe('a model that answers inside its reasoning', () => {
     assert.equal(salvageJson('I considered it and have no comment.'), null);
   });
 });
+
+describe('salvageJson picks the right candidate', () => {
+  // Raised on the reasoning-salvage change: the first balanced block is not
+  // necessarily the answer, and a block that fails to parse is not the end of
+  // the search.
+
+  test('keeps looking after a balanced block that is not JSON', () => {
+    // Reasoning is prose, and prose contains braces.
+    const out = salvageJson('note: {not json}; answer: {"findings":[]}') as Record<string, unknown> | null;
+    assert.deepEqual(out, { findings: [] });
+  });
+
+  test('takes the last object when the model drafted one first', () => {
+    // A thinking model writes a draft, reconsiders, then writes the real answer.
+    // Returning the first submits something the model itself discarded.
+    const out = salvageJson(
+      'first attempt {"effort_score":1} — on reflection {"effort_score":4}',
+    ) as Record<string, unknown> | null;
+    assert.equal(out?.effort_score, 4);
+  });
+
+  test('is unchanged for a single truncated reply', () => {
+    assert.equal(salvageJson('{"summary": "x", "groups": ['), null);
+    assert.deepEqual(salvageJson('{"summary": "x"}'), { summary: 'x' });
+  });
+
+  test('does not descend into a nested object as a separate candidate', () => {
+    const out = salvageJson('{"outer": {"inner": 1}}') as Record<string, unknown> | null;
+    assert.deepEqual(out, { outer: { inner: 1 } });
+  });
+});

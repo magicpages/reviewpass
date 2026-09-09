@@ -233,7 +233,10 @@ export class ModelClient {
         return {
           value: choice.message.content ?? '',
           finishReason: choice.finish_reason ?? '',
-          reasoning: choice.message.reasoning_content ?? choice.message.thinking ?? choice.message.reasoning ?? '',
+          // `||`, not `??`. A server that sends `reasoning_content: ''` next to a
+          // populated `thinking` is not null, so nullish coalescing would stop
+          // at the empty string and lose the answer this exists to find.
+          reasoning: choice.message.reasoning_content || choice.message.thinking || choice.message.reasoning || '',
           promptTokens: json.usage?.prompt_tokens ?? 0,
           completionTokens: json.usage?.completion_tokens ?? 0,
         };
@@ -261,24 +264,40 @@ export class ModelClient {
 
 /** Recover the largest balanced JSON object from a truncated response. */
 export function salvageJson(s: string): unknown {
-  const start = s.indexOf('{');
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < s.length; i++) {
-    const c = s[i]!;
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth++;
-    else if (c === '}' && --depth === 0) {
-      try { return JSON.parse(s.slice(start, i + 1)); } catch { return null; }
+  // Every balanced block is tried, and the last one that parses wins.
+  //
+  // Two reasons, both from real replies. A block that fails to parse is not the
+  // end of the search: reasoning contains prose with braces in it, and giving
+  // up on `note: {not json}` loses the answer that follows. And when several
+  // parse, the last is the one to take — a thinking model drafts an object,
+  // reconsiders, and writes the real one at the end, so returning the first
+  // submits a draft the model itself discarded.
+  //
+  // For a truncated reply, which is what this was written for, there is only
+  // ever one candidate and the behaviour is unchanged.
+  let found: unknown = null;
+  for (let start = s.indexOf('{'); start >= 0; start = s.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < s.length; i++) {
+      const c = s[i]!;
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) {
+        try {
+          found = JSON.parse(s.slice(start, i + 1));
+          start = i;                      // resume past this block, not inside it
+        } catch { /* not JSON; the next `{` may be */ }
+        break;
+      }
     }
   }
-  return null;
+  return found;
 }
