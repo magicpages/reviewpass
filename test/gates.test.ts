@@ -468,3 +468,33 @@ describe('salvageJson picks the right candidate', () => {
     assert.deepEqual(out, { outer: { inner: 1 } });
   });
 });
+
+describe('salvageJson refuses a fragment from inside an unclosed object', () => {
+  /**
+   * The one that matters. A reply cut off mid-write leaves a *complete* object
+   * inside an *incomplete* one, and returning that inner fragment is worse than
+   * returning nothing — a half summary reaching the renderer is what took down
+   * a finished review. An earlier version of this scan resumed at the next
+   * brace and handed back the nested object.
+   */
+  test('returns null when the outer object never closed', () => {
+    assert.equal(salvageJson('{"summary": "x", "groups": [{"label": "a"}'), null);
+  });
+
+  test('returns null for a deeply nested fragment of a truncated reply', () => {
+    assert.equal(salvageJson('{"a": {"b": {"c": 1}'), null);
+  });
+
+  test('still recovers a complete object that follows unparseable prose', () => {
+    assert.deepEqual(salvageJson('note: {not json}; answer: {"findings":[]}'), { findings: [] });
+  });
+
+  test('still prefers the final answer over an earlier draft', () => {
+    const out = salvageJson('draft {"effort_score":1} final {"effort_score":4}') as Record<string, unknown>;
+    assert.equal(out.effort_score, 4);
+  });
+
+  test('still returns a whole object rather than its inner half', () => {
+    assert.deepEqual(salvageJson('{"outer": {"inner": 1}}'), { outer: { inner: 1 } });
+  });
+});

@@ -264,38 +264,38 @@ export class ModelClient {
 
 /** Recover the largest balanced JSON object from a truncated response. */
 export function salvageJson(s: string): unknown {
-  // Every balanced block is tried, and the last one that parses wins.
+  // One string-aware pass, and only a block that opens and closes at the top
+  // level is a candidate. The nesting rule is the important half: a reply cut
+  // off mid-write leaves a complete object *inside* an incomplete one, and
+  // returning that inner fragment is worse than returning nothing — a half
+  // summary reaching the renderer is what took down a finished review.
   //
-  // Two reasons, both from real replies. A block that fails to parse is not the
-  // end of the search: reasoning contains prose with braces in it, and giving
-  // up on `note: {not json}` loses the answer that follows. And when several
-  // parse, the last is the one to take — a thinking model drafts an object,
-  // reconsiders, and writes the real one at the end, so returning the first
-  // submits a draft the model itself discarded.
-  //
-  // For a truncated reply, which is what this was written for, there is only
-  // ever one candidate and the behaviour is unchanged.
+  // Among top-level candidates the last that parses wins. A block that fails to
+  // parse is not the end of the search, because reasoning is prose and prose has
+  // braces in it; and a thinking model drafts an object before writing the real
+  // one, so the first is often something it discarded.
   let found: unknown = null;
-  for (let start = s.indexOf('{'); start >= 0; start = s.indexOf('{', start + 1)) {
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    for (let i = start; i < s.length; i++) {
-      const c = s[i]!;
-      if (inStr) {
-        if (esc) esc = false;
-        else if (c === '\\') esc = true;
-        else if (c === '"') inStr = false;
-        continue;
-      }
-      if (c === '"') inStr = true;
-      else if (c === '{') depth++;
-      else if (c === '}' && --depth === 0) {
-        try {
-          found = JSON.parse(s.slice(start, i + 1));
-          start = i;                      // resume past this block, not inside it
-        } catch { /* not JSON; the next `{` may be */ }
-        break;
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try { found = JSON.parse(s.slice(start, i + 1)); } catch { /* the next one may parse */ }
+        start = -1;
       }
     }
   }
