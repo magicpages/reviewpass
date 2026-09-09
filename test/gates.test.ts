@@ -27,6 +27,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
 import { renderWalkthrough } from '../src/review/render.js';
+import { salvageJson } from '../src/model/client.js';
 import type { Finding } from '../src/types.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
@@ -403,5 +404,36 @@ describe('a malformed walkthrough group must not crash the render', () => {
     // shape `salvageJson` can produce and no schema enforced.
     const r = { ...base, effort: { score: 3, label: 7 } } as never;
     assert.doesNotThrow(() => renderWalkthrough(pr, r));
+  });
+});
+
+describe('a model that answers inside its reasoning', () => {
+  /**
+   * Three escalating budgets all reporting "thinking consumed the budget" is
+   * not a budget problem. A thinking model routinely writes its JSON inside the
+   * reasoning and emits nothing after it, and the reasoning arrives under a
+   * different key depending on who is serving: `reasoning_content` from
+   * DeepSeek and OpenRouter, `thinking` from Ollama, `reasoning` elsewhere.
+   */
+  test('salvages an object written into the reasoning', () => {
+    const reasoning = 'Let me work through this.\n{"findings": [], "effort_score": 2}\nThat is my answer.';
+    const out = salvageJson(reasoning);
+    assert.deepEqual(out, { findings: [], effort_score: 2 });
+  });
+
+  test('recovers an object followed by more prose', () => {
+    // The common shape: the model reasons, writes the answer, then keeps talking.
+    const out = salvageJson('so: {"summary": "x"} — and that is why.') as Record<string, unknown> | null;
+    assert.equal(out?.summary, 'x');
+  });
+
+  test('gives up on an object that was cut off mid-write', () => {
+    // Deliberate. Half an object is what took down a review when it reached the
+    // renderer, so an unbalanced one is not worth recovering.
+    assert.equal(salvageJson('thinking… {"summary": "x", "groups": ['), null);
+  });
+
+  test('returns null when the reasoning holds no object', () => {
+    assert.equal(salvageJson('I considered it and have no comment.'), null);
   });
 });
