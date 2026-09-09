@@ -27,6 +27,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
 import { renderWalkthrough } from '../src/review/render.js';
+import { salvageJson } from '../src/model/client.js';
 import type { Finding } from '../src/types.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
@@ -403,5 +404,97 @@ describe('a malformed walkthrough group must not crash the render', () => {
     // shape `salvageJson` can produce and no schema enforced.
     const r = { ...base, effort: { score: 3, label: 7 } } as never;
     assert.doesNotThrow(() => renderWalkthrough(pr, r));
+  });
+});
+
+describe('a model that answers inside its reasoning', () => {
+  /**
+   * Three escalating budgets all reporting "thinking consumed the budget" is
+   * not a budget problem. A thinking model routinely writes its JSON inside the
+   * reasoning and emits nothing after it, and the reasoning arrives under a
+   * different key depending on who is serving: `reasoning_content` from
+   * DeepSeek and OpenRouter, `thinking` from Ollama, `reasoning` elsewhere.
+   */
+  test('salvages an object written into the reasoning', () => {
+    const reasoning = 'Let me work through this.\n{"findings": [], "effort_score": 2}\nThat is my answer.';
+    const out = salvageJson(reasoning);
+    assert.deepEqual(out, { findings: [], effort_score: 2 });
+  });
+
+  test('recovers an object followed by more prose', () => {
+    // The common shape: the model reasons, writes the answer, then keeps talking.
+    const out = salvageJson('so: {"summary": "x"} — and that is why.') as Record<string, unknown> | null;
+    assert.equal(out?.summary, 'x');
+  });
+
+  test('gives up on an object that was cut off mid-write', () => {
+    // Deliberate. Half an object is what took down a review when it reached the
+    // renderer, so an unbalanced one is not worth recovering.
+    assert.equal(salvageJson('thinking… {"summary": "x", "groups": ['), null);
+  });
+
+  test('returns null when the reasoning holds no object', () => {
+    assert.equal(salvageJson('I considered it and have no comment.'), null);
+  });
+});
+
+describe('salvageJson picks the right candidate', () => {
+  // Raised on the reasoning-salvage change: the first balanced block is not
+  // necessarily the answer, and a block that fails to parse is not the end of
+  // the search.
+
+  test('keeps looking after a balanced block that is not JSON', () => {
+    // Reasoning is prose, and prose contains braces.
+    const out = salvageJson('note: {not json}; answer: {"findings":[]}') as Record<string, unknown> | null;
+    assert.deepEqual(out, { findings: [] });
+  });
+
+  test('takes the last object when the model drafted one first', () => {
+    // A thinking model writes a draft, reconsiders, then writes the real answer.
+    // Returning the first submits something the model itself discarded.
+    const out = salvageJson(
+      'first attempt {"effort_score":1} — on reflection {"effort_score":4}',
+    ) as Record<string, unknown> | null;
+    assert.equal(out?.effort_score, 4);
+  });
+
+  test('is unchanged for a single truncated reply', () => {
+    assert.equal(salvageJson('{"summary": "x", "groups": ['), null);
+    assert.deepEqual(salvageJson('{"summary": "x"}'), { summary: 'x' });
+  });
+
+  test('does not descend into a nested object as a separate candidate', () => {
+    const out = salvageJson('{"outer": {"inner": 1}}') as Record<string, unknown> | null;
+    assert.deepEqual(out, { outer: { inner: 1 } });
+  });
+});
+
+describe('salvageJson refuses a fragment from inside an unclosed object', () => {
+  /**
+   * The one that matters. A reply cut off mid-write leaves a *complete* object
+   * inside an *incomplete* one, and returning that inner fragment is worse than
+   * returning nothing — a half summary reaching the renderer is what took down
+   * a finished review. An earlier version of this scan resumed at the next
+   * brace and handed back the nested object.
+   */
+  test('returns null when the outer object never closed', () => {
+    assert.equal(salvageJson('{"summary": "x", "groups": [{"label": "a"}'), null);
+  });
+
+  test('returns null for a deeply nested fragment of a truncated reply', () => {
+    assert.equal(salvageJson('{"a": {"b": {"c": 1}'), null);
+  });
+
+  test('still recovers a complete object that follows unparseable prose', () => {
+    assert.deepEqual(salvageJson('note: {not json}; answer: {"findings":[]}'), { findings: [] });
+  });
+
+  test('still prefers the final answer over an earlier draft', () => {
+    const out = salvageJson('draft {"effort_score":1} final {"effort_score":4}') as Record<string, unknown>;
+    assert.equal(out.effort_score, 4);
+  });
+
+  test('still returns a whole object rather than its inner half', () => {
+    assert.deepEqual(salvageJson('{"outer": {"inner": 1}}'), { outer: { inner: 1 } });
   });
 });

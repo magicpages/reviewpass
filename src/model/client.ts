@@ -3,7 +3,16 @@ import { envAny, type ReviewpassConfig } from '../config/index.js';
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 
 interface ChatChoice {
-  message: { content: string | null; reasoning_content?: string | null };
+  message: {
+    content: string | null;
+    // Three names for one thing. `reasoning_content` is DeepSeek's and the one
+    // OpenRouter passes through; Ollama calls it `thinking`; others say
+    // `reasoning`. Reading only the first makes a model that answered look like
+    // a model that returned nothing.
+    reasoning_content?: string | null;
+    reasoning?: string | null;
+    thinking?: string | null;
+  };
   finish_reason: string;
 }
 interface ChatResponse {
@@ -22,6 +31,8 @@ export interface CallOptions {
 export interface CallResult<T> {
   value: T;
   reasoning: string;
+  /** Why the model stopped: `stop`, `length`, or whatever the server says. */
+  finishReason?: string;
   promptTokens: number;
   completionTokens: number;
 }
@@ -83,7 +94,26 @@ export class ModelClient {
         maxTokens: (opts.maxTokens ?? this.cfg.model.maxTokens) * (attempt + 1),
       });
       const body = r.value.trim();
-      if (!body) { lastErr = new Error('model returned no content (thinking consumed the budget)'); continue; }
+      if (!body) {
+        // Empty content with reasoning present is not an exhausted budget - it
+        // is a model that put its answer somewhere else. Thinking models
+        // routinely write the JSON inside the reasoning and emit nothing after
+        // it, and three escalating budgets all "running out" is the tell.
+        const salvagedFromThinking = r.reasoning ? salvageJson(r.reasoning) : null;
+        if (salvagedFromThinking) return { ...r, value: salvagedFromThinking as T };
+
+        // Say what actually happened, so the next failure is a fact rather than
+        // another guess: whether the model stopped or was cut off, how much it
+        // wrote, and whether any of it was reasoning.
+        lastErr = new Error(
+          'model returned no content'
+          + ` (finish_reason=${r.finishReason || 'unknown'},`
+          + ` completion_tokens=${r.completionTokens},`
+          + ` reasoning=${r.reasoning ? `${r.reasoning.length} chars` : 'none'},`
+          + ` budget=${(opts.maxTokens ?? this.cfg.model.maxTokens) * (attempt + 1)})`,
+        );
+        continue;
+      }
       try {
         return { ...r, value: JSON.parse(body) as T };
       } catch (err) {
@@ -202,7 +232,11 @@ export class ModelClient {
         this.totalCompletion += json.usage?.completion_tokens ?? 0;
         return {
           value: choice.message.content ?? '',
-          reasoning: choice.message.reasoning_content ?? '',
+          finishReason: choice.finish_reason ?? '',
+          // `||`, not `??`. A server that sends `reasoning_content: ''` next to a
+          // populated `thinking` is not null, so nullish coalescing would stop
+          // at the empty string and lose the answer this exists to find.
+          reasoning: choice.message.reasoning_content || choice.message.thinking || choice.message.reasoning || '',
           promptTokens: json.usage?.prompt_tokens ?? 0,
           completionTokens: json.usage?.completion_tokens ?? 0,
         };
@@ -229,13 +263,23 @@ export class ModelClient {
 }
 
 /** Recover the largest balanced JSON object from a truncated response. */
-function salvageJson(s: string): unknown {
-  const start = s.indexOf('{');
-  if (start < 0) return null;
+export function salvageJson(s: string): unknown {
+  // One string-aware pass, and only a block that opens and closes at the top
+  // level is a candidate. The nesting rule is the important half: a reply cut
+  // off mid-write leaves a complete object *inside* an incomplete one, and
+  // returning that inner fragment is worse than returning nothing — a half
+  // summary reaching the renderer is what took down a finished review.
+  //
+  // Among top-level candidates the last that parses wins. A block that fails to
+  // parse is not the end of the search, because reasoning is prose and prose has
+  // braces in it; and a thinking model drafts an object before writing the real
+  // one, so the first is often something it discarded.
+  let found: unknown = null;
   let depth = 0;
+  let start = -1;
   let inStr = false;
   let esc = false;
-  for (let i = start; i < s.length; i++) {
+  for (let i = 0; i < s.length; i++) {
     const c = s[i]!;
     if (inStr) {
       if (esc) esc = false;
@@ -243,11 +287,17 @@ function salvageJson(s: string): unknown {
       else if (c === '"') inStr = false;
       continue;
     }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth++;
-    else if (c === '}' && --depth === 0) {
-      try { return JSON.parse(s.slice(start, i + 1)); } catch { return null; }
+    if (c === '"') { inStr = true; continue; }
+    if (c === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try { found = JSON.parse(s.slice(start, i + 1)); } catch { /* the next one may parse */ }
+        start = -1;
+      }
     }
   }
-  return null;
+  return found;
 }
