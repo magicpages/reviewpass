@@ -95,7 +95,19 @@ async function sampleFindings(
     FINDINGS_SCHEMA,
     { schemaName: 'findings', maxTokens: cfg.model.maxTokens, temperature },
   );
-  return value.findings ?? [];
+  // A reply without a `findings` array is not an empty review, it is a reply
+  // that was never understood — and the difference is the whole point. Salvage
+  // recovers whatever object it can find, including one from a thinking
+  // model's reasoning, so a stray example or fragment used to arrive here with
+  // no `findings` key, become `[]`, and be counted as a file reviewed cleanly.
+  //
+  // That turns a loud failure into a false all-clear, which is the one outcome
+  // this reviewer must never produce. An empty array is a real answer; a
+  // missing one is not.
+  if (!Array.isArray(value?.findings)) {
+    throw new Error('model reply had no findings array (recovered an object of the wrong shape)');
+  }
+  return value.findings;
 }
 
 export async function findInFile(

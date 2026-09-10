@@ -99,8 +99,16 @@ export class ModelClient {
         // is a model that put its answer somewhere else. Thinking models
         // routinely write the JSON inside the reasoning and emit nothing after
         // it, and three escalating budgets all "running out" is the tell.
+        // Salvage from reasoning only when the object looks like the answer.
+        // Reasoning is prose and prose contains objects — an example, a sketch,
+        // a fragment of the input quoted back. Handing one of those on as the
+        // result is worse than failing: a findings reply without a `findings`
+        // key reads downstream as a file reviewed cleanly, which is a false
+        // all-clear. The schema already says which keys the answer must have.
         const salvagedFromThinking = r.reasoning ? salvageJson(r.reasoning) : null;
-        if (salvagedFromThinking) return { ...r, value: salvagedFromThinking as T };
+        if (salvagedFromThinking && matchesSchema(salvagedFromThinking, schema)) {
+          return { ...r, value: salvagedFromThinking as T };
+        }
 
         // Say what actually happened, so the next failure is a fact rather than
         // another guess: whether the model stopped or was cut off, how much it
@@ -263,6 +271,21 @@ export class ModelClient {
 }
 
 /** Recover the largest balanced JSON object from a truncated response. */
+/**
+ * Whether a salvaged object carries the keys the schema demands.
+ *
+ * Deliberately shallow: this is a shape check to tell an answer from a
+ * fragment, not validation. Every required top-level property has to be
+ * present, which is enough to reject the sketch a model left in its reasoning
+ * and cheap enough to run on every recovery.
+ */
+export function matchesSchema(value: unknown, schema: object | undefined): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const required = (schema as { required?: unknown })?.required;
+  if (!Array.isArray(required) || !required.length) return true;
+  return required.every((k) => typeof k === 'string' && k in (value as Record<string, unknown>));
+}
+
 export function salvageJson(s: string): unknown {
   // One string-aware pass, and only a block that opens and closes at the top
   // level is a candidate. The nesting rule is the important half: a reply cut
