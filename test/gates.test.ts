@@ -27,7 +27,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsImpossibleState } from '../src/review/run.js';
 import { renderWalkthrough } from '../src/review/render.js';
-import { salvageJson } from '../src/model/client.js';
+import { salvageJson, matchesSchema } from '../src/model/client.js';
 import type { Finding } from '../src/types.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
@@ -496,5 +496,36 @@ describe('salvageJson refuses a fragment from inside an unclosed object', () => 
 
   test('still returns a whole object rather than its inner half', () => {
     assert.deepEqual(salvageJson('{"outer": {"inner": 1}}'), { outer: { inner: 1 } });
+  });
+});
+
+describe('a recovered object must be the answer, not a fragment', () => {
+  /**
+   * The worst outcome this reviewer can produce is a false all-clear, and
+   * salvaging from a thinking model's reasoning created one. Reasoning is prose
+   * and prose contains objects; one without a `findings` key arrived as
+   * `value.findings ?? []`, became an empty array, and counted as a file
+   * reviewed cleanly. A pull request of 825 new lines came back "Nothing to
+   * raise" while another reviewer found four defects in it.
+   */
+  const FINDINGS_LIKE = { type: 'object', required: ['findings'] };
+
+  test('accepts an object carrying the required key', () => {
+    assert.equal(matchesSchema({ findings: [] }, FINDINGS_LIKE), true);
+  });
+
+  test('rejects a fragment that happens to be valid JSON', () => {
+    // The shape a model leaves behind when it sketches in its reasoning.
+    assert.equal(matchesSchema({ path: 'src/a.ts', line: 3 }, FINDINGS_LIKE), false);
+  });
+
+  test('rejects a non-object', () => {
+    for (const v of [null, 'findings', 42, []]) {
+      assert.equal(matchesSchema(v, FINDINGS_LIKE), v === undefined);
+    }
+  });
+
+  test('accepts anything when the schema demands nothing', () => {
+    assert.equal(matchesSchema({ anything: 1 }, { type: 'object' }), true);
   });
 });
