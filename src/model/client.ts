@@ -141,6 +141,12 @@ export class ModelClient {
       temperature: opts.temperature ?? this.cfg.model.temperature,
       max_tokens: opts.maxTokens ?? this.cfg.model.maxTokens,
     };
+    // Ollama turns thinking on for any model that can do it unless told
+    // otherwise, and its native `think` flag is ignored on this endpoint —
+    // `reasoning_effort` is the only lever. Left unset the request is unchanged,
+    // so an endpoint that does not know the field never sees it.
+    if (this.cfg.model.reasoningEffort) body.reasoning_effort = this.cfg.model.reasoningEffort;
+
     if (opts.schema) {
       body.response_format = {
         type: 'json_schema',

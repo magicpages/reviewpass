@@ -21,6 +21,17 @@ export interface ReviewpassConfig {
     /** A second model for the refutation pass. Falls back to `name`. */
     verifyModel?: string;
     /**
+     * How hard the model may think before answering, passed through as
+     * `reasoning_effort`. OpenAI's convention, and Ollama maps it onto its own
+     * Think field: `none` off, `low`/`medium`/`high` on with rising effort.
+     *
+     * Worth setting on any endpoint that turns thinking on by itself. Ollama
+     * does for every model capable of it, and an unbounded budget is not
+     * hypothetical — one file drew 212,651 characters of reasoning and never
+     * reached an answer.
+     */
+    reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+    /**
      * Extra routing sent verbatim with every request, for brokers that accept
      * it. Shape is the broker's, not ours: this does not interpret it.
      *
@@ -238,9 +249,13 @@ function applyEnv(cfg: ReviewpassConfig): ReviewpassConfig {
   const endpoint = envAny('ENDPOINT');
   const model = envAny('MODEL');
   const verifyModel = envAny('VERIFY_MODEL');
+  const effort = envAny('REASONING_EFFORT');
   if (endpoint) { cfg.model.endpoint = endpoint; cfg.model.endpoints = [endpoint]; }
   if (model) cfg.model.name = model;
   if (verifyModel) cfg.model.verifyModel = verifyModel;
+  if (effort && ['none', 'low', 'medium', 'high'].includes(effort)) {
+    cfg.model.reasoningEffort = effort as ReviewpassConfig['model']['reasoningEffort'];
+  }
   return cfg;
 }
 
