@@ -29,6 +29,10 @@ import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsI
 import { renderWalkthrough } from '../src/review/render.js';
 import { salvageJson, matchesSchema } from '../src/model/client.js';
 import type { Finding } from '../src/types.js';
+import { loadConfig } from '../src/config/index.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { classifyBlocker } from '../src/model/blocked.js';
 
 const finding = (over: Partial<Finding>): Finding => ({
@@ -527,5 +531,37 @@ describe('a recovered object must be the answer, not a fragment', () => {
 
   test('accepts anything when the schema demands nothing', () => {
     assert.equal(matchesSchema({ anything: 1 }, { type: 'object' }), true);
+  });
+});
+
+describe('reasoningEffort is validated wherever it comes from', () => {
+  /**
+   * A YAML file is not type-checked on the way in, so a value the union forbids
+   * used to reach the request body unexamined. `reasoningEffort: maximum` would
+   * be forwarded verbatim, and an endpoint that rejects the field rejects every
+   * request carrying it — a typo would take the whole review down rather than
+   * degrade it.
+   */
+  const write = (yaml: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'rp-cfg-'));
+    writeFileSync(join(dir, '.reviewpass.yaml'), yaml);
+    return dir;
+  };
+
+  test('keeps a value the endpoint understands', () => {
+    const cfg = loadConfig(write('model:\n  reasoningEffort: low\n'));
+    assert.equal(cfg.model.reasoningEffort, 'low');
+  });
+
+  test('drops a value nothing understands', () => {
+    for (const bad of ['maximum', 'off', 'true', '9']) {
+      const cfg = loadConfig(write(`model:\n  reasoningEffort: ${bad}\n`));
+      assert.equal(cfg.model.reasoningEffort, undefined, `"${bad}" must not reach the request`);
+    }
+  });
+
+  test('leaves the field alone when the file does not mention it', () => {
+    const cfg = loadConfig(write('model:\n  temperature: 0.2\n'));
+    assert.equal(cfg.model.reasoningEffort, undefined);
   });
 });

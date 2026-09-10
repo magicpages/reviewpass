@@ -92,3 +92,17 @@ jobs:
           # would carry a retention promise nothing is keeping. It is ignored
           # with a warning off OpenRouter rather than silently honoured.
           REVIEWPASS_ZDR: '1'
+
+          # How hard the model may think before answering. Worth setting on any
+          # endpoint that turns thinking on by itself: Ollama does, for every
+          # model capable of it, and its own `think` flag is ignored on the
+          # OpenAI-compatible route — this is the only lever. Unbounded is not
+          # hypothetical; one file drew 212,651 characters of reasoning and
+          # never reached an answer.
+          #
+          #   none  off        low / medium / high  on, rising effort
+          #
+          # Measure rather than assume: the documented mapping is reported wrong
+          # on Ollama's cloud endpoint for some models. `scripts/probe-reasoning.mjs`
+          # answers it for yours in four requests.
+          # REVIEWPASS_REASONING_EFFORT: low
