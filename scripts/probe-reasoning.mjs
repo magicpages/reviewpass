@@ -45,13 +45,26 @@ async function probe(effort) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
     });
-    json = await res.json();
   } catch (err) {
-    return { effort: effort ?? '(unset)', error: String(err).slice(0, 60) };
+    return { effort: effort ?? '(unset)', error: String(err).slice(0, 60), ms: Date.now() - started };
+  }
+  // The status and the elapsed time are the two columns worth having when a
+  // gateway answers with HTML or nothing at all, so the body is parsed
+  // separately and its failure does not take them with it.
+  const text = await res.text().catch(() => '');
+  try { json = JSON.parse(text); } catch {
+    return {
+      effort: effort ?? '(unset)', http: res.status, finish: 'non-JSON body',
+      content: 0, reasoning: 0, tokens: 0, ms: Date.now() - started,
+    };
   }
   const choice = json?.choices?.[0];
   const msg = choice?.message ?? {};
-  const reasoning = msg.reasoning_content ?? msg.thinking ?? msg.reasoning ?? '';
+  // `||`, not `??`. An empty `reasoning_content` beside a populated `thinking`
+  // is not null, so nullish coalescing stops at the empty string and reports a
+  // thinking request as though thinking were off — which is precisely the
+  // measurement this script exists to make.
+  const reasoning = msg.reasoning_content || msg.thinking || msg.reasoning || '';
   return {
     effort: effort ?? '(unset)',
     http: res.status,
@@ -66,7 +79,7 @@ async function probe(effort) {
 
 console.log(`  ${model} @ ${endpoint}\n`);
 console.log(`  ${'effort'.padEnd(10)}${'http'.padStart(5)}${'finish'.padStart(9)}${'content'.padStart(9)}${'reasoning'.padStart(11)}${'tokens'.padStart(8)}${'ms'.padStart(7)}`);
-for (const effort of [undefined, 'none', 'low', 'medium']) {
+for (const effort of [undefined, 'none', 'low', 'medium', 'high']) {
   const r = await probe(effort);
   if (r.error || r.err) { console.log(`  ${String(r.effort).padEnd(10)}  ${r.error ?? r.err}`); continue; }
   console.log(

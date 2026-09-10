@@ -22,8 +22,15 @@ export interface ReviewpassConfig {
     verifyModel?: string;
     /**
      * How hard the model may think before answering, passed through as
-     * `reasoning_effort`. OpenAI's convention, and Ollama maps it onto its own
-     * Think field: `none` off, `low`/`medium`/`high` on with rising effort.
+     * `reasoning_effort`.
+     *
+     * These are requested labels, not a guarantee. What each one does is
+     * decided by the endpoint and the model: Ollama documents `none` as off and
+     * `low`/`medium`/`high` as on with rising effort, and that mapping was
+     * measured to hold for `deepseek-v4-flash:0731`, but it is reported wrong
+     * on the same cloud endpoint for other models. Treat the table as the
+     * request and measure the answer — `scripts/probe-reasoning.mjs` does it in
+     * five calls.
      *
      * Worth setting on any endpoint that turns thinking on by itself. Ollama
      * does for every model capable of it, and an unbounded budget is not
@@ -227,6 +234,22 @@ function merge<T>(base: T, over: unknown): T {
 export const envAny = (suffix: string): string | undefined =>
   process.env[`REVIEWPASS_${suffix}`] ?? process.env[`WARREN_${suffix}`];
 
+const EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+
+/**
+ * The effort value, or nothing at all.
+ *
+ * Anything unrecognised is dropped rather than passed on. An endpoint that
+ * rejects the field rejects every request carrying it, so a typo in a config
+ * file would take the whole review down rather than degrade it — and a config
+ * file is not type-checked on the way in, whatever the union says.
+ */
+function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
+  return (EFFORTS as readonly unknown[]).includes(v)
+    ? (v as ReviewpassConfig['model']['reasoningEffort'])
+    : undefined;
+}
+
 export function loadConfig(root: string): ReviewpassConfig {
   // New names first, old ones still read so a repository that configured this
   // before the rename keeps working without being touched.
@@ -238,6 +261,10 @@ export function loadConfig(root: string): ReviewpassConfig {
     if (!existsSync(p)) continue;
     const raw = parse(readFileSync(p, 'utf8')) as Record<string, unknown> | null;
     const cfg = merge(DEFAULTS, raw);
+    // A YAML file is not type-checked on the way in, so a value the union
+    // forbids reaches the request body unexamined — `reasoningEffort: maximum`
+    // would be forwarded verbatim and fail every call the reviewer makes.
+    cfg.model.reasoningEffort = validEffort(cfg.model.reasoningEffort);
     // Env always wins, so a workflow can point at a different box without a commit.
     return applyEnv(cfg);
   }
@@ -253,9 +280,7 @@ function applyEnv(cfg: ReviewpassConfig): ReviewpassConfig {
   if (endpoint) { cfg.model.endpoint = endpoint; cfg.model.endpoints = [endpoint]; }
   if (model) cfg.model.name = model;
   if (verifyModel) cfg.model.verifyModel = verifyModel;
-  if (effort && ['none', 'low', 'medium', 'high'].includes(effort)) {
-    cfg.model.reasoningEffort = effort as ReviewpassConfig['model']['reasoningEffort'];
-  }
+  if (effort) cfg.model.reasoningEffort = validEffort(effort);
   return cfg;
 }
 
