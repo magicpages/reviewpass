@@ -233,10 +233,15 @@ export class ModelClient {
           // a date, because a server that says how long to wait knows better
           // than a doubling guess.
           if (res.status === 429) {
-            const after = retryAfterMs(res.headers.get('retry-after'));
             rateLimited++;
-            await sleep(after ?? Math.min(60_000, 4_000 * 2 ** attempt));
             lastErr = new Error(`model 429: ${text.slice(0, 160)}`);
+            // Only wait if the wait buys an attempt. On the last one the loop is
+            // about to end, and sleeping up to a minute first delays a failure
+            // that is already decided.
+            const willRetry = attempt + 1 < MAX_ATTEMPTS + Math.min(rateLimited, MAX_RATE_LIMIT_WAITS);
+            if (!willRetry) break;
+            await sleep(retryAfterMs(res.headers.get('retry-after'))
+              ?? Math.min(60_000, 4_000 * 2 ** attempt));
             continue;
           }
           // Not every OpenAI-compatible server implements the strict

@@ -3,6 +3,7 @@ import * as github from '@actions/github';
 import { apiBaseUrl } from './auth.js';
 import { envAny } from '../config/index.js';
 import type { ChangedFile, Finding, PullRequestContext } from '../types.js';
+import { narrowToPullRequest } from './diff-scope.js';
 import { addedLineNumbers } from '../context/select.js';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -122,7 +123,7 @@ export class GitHubClient {
     const changed: ChangedFile[] = atSha
       ? await this.compareFiles(pr.base.sha, atSha)
       : useIncremental
-        ? await this.narrowToPullRequest(
+        ? narrowToPullRequest(
             await this.compareFiles(prior.lastReviewedSha!, pr.head.sha),
             files.map((f) => this.toChangedFile(f)),
           )
@@ -221,19 +222,6 @@ export class GitHubClient {
       patch: f.patch,
       addedLines: f.patch ? addedLineNumbers(f.patch) : [],
     };
-  }
-
-  /**
-   * The files in both sets: changed since the last review, and part of this
-   * pull request.
-   *
-   * The incremental side supplies the patch — it is the one that describes what
-   * is new — while the pull request's own list decides what is in scope. A file
-   * that only appears because the branch pulled in its base is dropped.
-   */
-  private narrowToPullRequest(sinceLastReview: ChangedFile[], inPullRequest: ChangedFile[]): ChangedFile[] {
-    const own = new Set(inPullRequest.map((f) => f.path));
-    return sinceLastReview.filter((f) => own.has(f.path));
   }
 
   private async compareFiles(base: string, head: string): Promise<ChangedFile[]> {

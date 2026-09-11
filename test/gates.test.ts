@@ -29,6 +29,7 @@ import { collapseNearDuplicates, redundantTestRequest, citationResolves, guardsI
 import { renderWalkthrough } from '../src/review/render.js';
 import { salvageJson, matchesSchema } from '../src/model/client.js';
 import type { Finding } from '../src/types.js';
+import { narrowToPullRequest } from '../src/github/diff-scope.js';
 import { loadConfig } from '../src/config/index.js';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -576,28 +577,32 @@ describe('an incremental review stays inside the pull request', () => {
    * every inline anchor because those paths were not in the diff, and the extra
    * files' worth of model calls hit the rate limit.
    */
-  const f = (path: string) => ({ path, status: 'modified', additions: 1, deletions: 0, addedLines: [1] });
-  const narrow = (since: { path: string }[], own: { path: string }[]) => {
-    const inPr = new Set(own.map((x) => x.path));
-    return since.filter((x) => inPr.has(x.path));
-  };
+  const f = (path: string, additions = 1) =>
+    ({ path, status: 'modified', additions, deletions: 0, addedLines: [1] }) as never;
 
   test('drops files that only arrived with a base update', () => {
     const since = [f('src/mine.ts'), f('src/someone-else.ts'), f('src/also-theirs.ts')];
     const own = [f('src/mine.ts'), f('src/mine-untouched-since.ts')];
-    assert.deepEqual(narrow(since, own).map((x) => x.path), ['src/mine.ts']);
+    assert.deepEqual(narrowToPullRequest(since, own).map((x) => x.path), ['src/mine.ts']);
+  });
+
+  test('returns the incremental objects, not the pull request ones', () => {
+    // Both lists hold the same path, so comparing paths alone would pass even if
+    // the wrong side were returned — and the wrong side carries no patch.
+    const mine = f('src/mine.ts', 7);
+    const stale = f('src/mine.ts', 99);
+    const out = narrowToPullRequest([mine], [stale]);
+    assert.strictEqual(out[0], mine, 'the patch must come from the incremental range');
   });
 
   test('keeps the review empty rather than reviewing the wrong thing', () => {
     // Nothing of this pull request changed since the last look. An empty review
     // is correct; fifty files of other people's code is not.
-    const since = [f('src/someone-else.ts')];
-    assert.deepEqual(narrow(since, [f('src/mine.ts')]), []);
+    assert.deepEqual(narrowToPullRequest([f('src/someone-else.ts')], [f('src/mine.ts')]), []);
   });
 
   test('never adds a file the incremental range did not report', () => {
-    const since = [f('src/mine.ts')];
-    const own = [f('src/mine.ts'), f('src/untouched.ts')];
-    assert.deepEqual(narrow(since, own).map((x) => x.path), ['src/mine.ts']);
+    const out = narrowToPullRequest([f('src/mine.ts')], [f('src/mine.ts'), f('src/untouched.ts')]);
+    assert.deepEqual(out.map((x) => x.path), ['src/mine.ts']);
   });
 });
