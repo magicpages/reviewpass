@@ -106,11 +106,26 @@ export class GitHubClient {
     const useIncremental = !atSha && incremental
       && Boolean(prior.lastReviewedSha) && prior.lastReviewedSha !== pr.head.sha;
 
-    // On an incremental run, review only what changed since reviewpass last looked.
+    // On an incremental run, review only what changed since reviewpass last
+    // looked — but only among files this pull request actually touches.
+    //
+    // The range from the last reviewed commit to the head is not the same set.
+    // When a branch takes an update from its base, every file merged in between
+    // appears in it, and those belong to other people's pull requests. One run
+    // reviewed fifty files this way where the pull request changed seven: the
+    // findings landed on code the author had never seen, GitHub refused every
+    // anchor because the paths were not in the diff, and the extra forty-three
+    // files' worth of calls hit the rate limit.
+    //
+    // `files` is the pull request's own file list from the API, which is the
+    // authority on what belongs here. The incremental range only narrows it.
     const changed: ChangedFile[] = atSha
       ? await this.compareFiles(pr.base.sha, atSha)
       : useIncremental
-        ? await this.compareFiles(prior.lastReviewedSha!, pr.head.sha)
+        ? await this.narrowToPullRequest(
+            await this.compareFiles(prior.lastReviewedSha!, pr.head.sha),
+            files.map((f) => this.toChangedFile(f)),
+          )
         : files.map((f) => this.toChangedFile(f));
     const head = atSha ?? pr.head.sha;
 
@@ -206,6 +221,19 @@ export class GitHubClient {
       patch: f.patch,
       addedLines: f.patch ? addedLineNumbers(f.patch) : [],
     };
+  }
+
+  /**
+   * The files in both sets: changed since the last review, and part of this
+   * pull request.
+   *
+   * The incremental side supplies the patch — it is the one that describes what
+   * is new — while the pull request's own list decides what is in scope. A file
+   * that only appears because the branch pulled in its base is dropped.
+   */
+  private narrowToPullRequest(sinceLastReview: ChangedFile[], inPullRequest: ChangedFile[]): ChangedFile[] {
+    const own = new Set(inPullRequest.map((f) => f.path));
+    return sinceLastReview.filter((f) => own.has(f.path));
   }
 
   private async compareFiles(base: string, head: string): Promise<ChangedFile[]> {

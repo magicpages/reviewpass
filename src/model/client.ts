@@ -196,9 +196,15 @@ export class ModelClient {
     }
     let droppedZdr = false;
     let loosenedFormat = false;
+    let rateLimited = 0;
 
     let lastErr: unknown;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    // Waiting out a rate limit is not the same as failing, so a 429 buys another
+    // attempt rather than spending one. Bounded, or a saturated endpoint would
+    // hold a review open indefinitely.
+    const MAX_ATTEMPTS = 4;
+    const MAX_RATE_LIMIT_WAITS = 4;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS + Math.min(rateLimited, MAX_RATE_LIMIT_WAITS); attempt++) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), this.cfg.model.requestTimeoutMs);
       // A retry moves to the next replica: if one is wedged, the other answers.
@@ -217,6 +223,22 @@ export class ModelClient {
           const text = await res.text();
           // A model swap on a 2-slot router shows up as a 503 for a few seconds.
           if (res.status === 503 || res.status >= 500) throw new Error(`upstream ${res.status}: ${text.slice(0, 200)}`);
+          // 429 is the one status that asks to be retried: it says the request
+          // was fine and arrived too soon. Treating it as fatal meant a review
+          // that briefly outran its rate limit lost the file for good — one run
+          // hit it 34 times, and because verification fails open, most of those
+          // findings reached the author marked unverified rather than checked.
+          //
+          // `Retry-After` is honoured when the server sends it, in seconds or as
+          // a date, because a server that says how long to wait knows better
+          // than a doubling guess.
+          if (res.status === 429) {
+            const after = retryAfterMs(res.headers.get('retry-after'));
+            rateLimited++;
+            await sleep(after ?? Math.min(60_000, 4_000 * 2 ** attempt));
+            lastErr = new Error(`model 429: ${text.slice(0, 160)}`);
+            continue;
+          }
           // Not every OpenAI-compatible server implements the strict
           // `json_schema` form; several accept only `json_object`, and one that
           // does not rejects every request the reviewer makes. Ask once for the
@@ -272,7 +294,10 @@ export class ModelClient {
         clearTimeout(timer);
       }
     }
-    throw new Error(`model unreachable after retries: ${String(lastErr).slice(0, 300)}`);
+    throw new Error(
+      `model unreachable after retries${rateLimited ? ` (rate limited ${rateLimited}x)` : ''}: `
+      + String(lastErr).slice(0, 300),
+    );
   }
 }
 
@@ -290,6 +315,23 @@ export function matchesSchema(value: unknown, schema: object | undefined): boole
   const required = (schema as { required?: unknown })?.required;
   if (!Array.isArray(required) || !required.length) return true;
   return required.every((k) => typeof k === 'string' && k in (value as Record<string, unknown>));
+}
+
+/**
+ * How long a server asked us to wait, in milliseconds.
+ *
+ * `Retry-After` is either a count of seconds or an HTTP date; both are in the
+ * wild. A server that says how long knows better than a doubling guess, so its
+ * answer wins — bounded, because a header asking for an hour is not an answer
+ * a review can use.
+ */
+function retryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(60_000, seconds * 1000);
+  const at = Date.parse(header);
+  if (!Number.isNaN(at)) return Math.min(60_000, Math.max(0, at - Date.now()));
+  return undefined;
 }
 
 export function salvageJson(s: string): unknown {

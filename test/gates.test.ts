@@ -565,3 +565,39 @@ describe('reasoningEffort is validated wherever it comes from', () => {
     assert.equal(cfg.model.reasoningEffort, undefined);
   });
 });
+
+describe('an incremental review stays inside the pull request', () => {
+  /**
+   * The range from the last reviewed commit to the head is not the set of files
+   * the pull request changed. When a branch takes an update from its base,
+   * every file merged in between appears in that range and belongs to somebody
+   * else's work. One run reviewed fifty files where the pull request changed
+   * seven: findings landed on code the author had never touched, GitHub refused
+   * every inline anchor because those paths were not in the diff, and the extra
+   * files' worth of model calls hit the rate limit.
+   */
+  const f = (path: string) => ({ path, status: 'modified', additions: 1, deletions: 0, addedLines: [1] });
+  const narrow = (since: { path: string }[], own: { path: string }[]) => {
+    const inPr = new Set(own.map((x) => x.path));
+    return since.filter((x) => inPr.has(x.path));
+  };
+
+  test('drops files that only arrived with a base update', () => {
+    const since = [f('src/mine.ts'), f('src/someone-else.ts'), f('src/also-theirs.ts')];
+    const own = [f('src/mine.ts'), f('src/mine-untouched-since.ts')];
+    assert.deepEqual(narrow(since, own).map((x) => x.path), ['src/mine.ts']);
+  });
+
+  test('keeps the review empty rather than reviewing the wrong thing', () => {
+    // Nothing of this pull request changed since the last look. An empty review
+    // is correct; fifty files of other people's code is not.
+    const since = [f('src/someone-else.ts')];
+    assert.deepEqual(narrow(since, [f('src/mine.ts')]), []);
+  });
+
+  test('never adds a file the incremental range did not report', () => {
+    const since = [f('src/mine.ts')];
+    const own = [f('src/mine.ts'), f('src/untouched.ts')];
+    assert.deepEqual(narrow(since, own).map((x) => x.path), ['src/mine.ts']);
+  });
+});
