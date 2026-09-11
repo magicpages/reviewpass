@@ -3,6 +3,7 @@ import * as github from '@actions/github';
 import { apiBaseUrl } from './auth.js';
 import { envAny } from '../config/index.js';
 import type { ChangedFile, Finding, PullRequestContext } from '../types.js';
+import { narrowToPullRequest } from './diff-scope.js';
 import { addedLineNumbers } from '../context/select.js';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -106,11 +107,26 @@ export class GitHubClient {
     const useIncremental = !atSha && incremental
       && Boolean(prior.lastReviewedSha) && prior.lastReviewedSha !== pr.head.sha;
 
-    // On an incremental run, review only what changed since reviewpass last looked.
+    // On an incremental run, review only what changed since reviewpass last
+    // looked — but only among files this pull request actually touches.
+    //
+    // The range from the last reviewed commit to the head is not the same set.
+    // When a branch takes an update from its base, every file merged in between
+    // appears in it, and those belong to other people's pull requests. One run
+    // reviewed fifty files this way where the pull request changed seven: the
+    // findings landed on code the author had never seen, GitHub refused every
+    // anchor because the paths were not in the diff, and the extra forty-three
+    // files' worth of calls hit the rate limit.
+    //
+    // `files` is the pull request's own file list from the API, which is the
+    // authority on what belongs here. The incremental range only narrows it.
     const changed: ChangedFile[] = atSha
       ? await this.compareFiles(pr.base.sha, atSha)
       : useIncremental
-        ? await this.compareFiles(prior.lastReviewedSha!, pr.head.sha)
+        ? narrowToPullRequest(
+            await this.compareFiles(prior.lastReviewedSha!, pr.head.sha),
+            files.map((f) => this.toChangedFile(f)),
+          )
         : files.map((f) => this.toChangedFile(f));
     const head = atSha ?? pr.head.sha;
 
