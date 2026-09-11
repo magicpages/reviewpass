@@ -167,6 +167,13 @@ const short = (sha: string) => sha.slice(0, 7);
  *
  * It carries the walkthrough marker deliberately. That is what lets the finished
  * review replace it in place, and what stops a second run posting a second one.
+ *
+ * It does NOT carry the reviewed-up-to-here marker. Only a review that finished
+ * may claim a sha: a run cancelled by the next push would otherwise leave behind
+ * a note saying it had reviewed a commit it never read, and the run after it
+ * would start incrementally from there and approve the rest unseen. Losing a
+ * genuine marker this way only costs a full re-review, which is the safe way to
+ * be wrong.
  */
 export function renderProgressNotice(
   pr: { headSha: string },
@@ -175,7 +182,7 @@ export function renderProgressNotice(
     | { kind: 'blocked'; message: string }
     | { kind: 'nothing'; reason: string },
 ): string {
-  const head = `${WALKTHROUGH_MARKER}\n<!-- reviewpass:sha:${pr.headSha} -->\n`;
+  const head = `${WALKTHROUGH_MARKER}\n<!-- reviewpass:reviewing:${pr.headSha} -->\n`;
   if (state.kind === 'blocked') {
     return `${head}\n> [!WARNING]\n> ${state.message} Nothing here reflects on the change.`;
   }
