@@ -16,25 +16,54 @@ import { createServer } from 'node:http';
 import { fetch as undiciFetch } from 'undici';
 import { modelTransport } from '../src/model/client.js';
 
+/** The error code undici attaches to a failed `fetch`, if it carries one. */
+function causeCode(err: unknown): unknown {
+  if (!(err instanceof Error)) return undefined;
+  const cause: unknown = err.cause;
+  return cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
+}
+
+/** How long a request bound by `configuredMs` takes to give up, and how. */
+async function gaveUpAfter(configuredMs: number, url: string) {
+  const agent = modelTransport(configuredMs);
+  const started = Date.now();
+  try {
+    const err = await undiciFetch(url, { method: 'POST', body: '{}', dispatcher: agent })
+      .then(() => null, (e: unknown) => e);
+    return { took: Date.now() - started, err };
+  } finally {
+    await agent.close();
+  }
+}
+
 test('the configured timeout bounds the request, not undici\'s 5-minute default', { timeout: 20_000 }, async () => {
   const server = createServer(() => { /* accept the request and never reply */ });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  const { port } = server.address() as { port: number };
+  try {
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as { port: number };
+    const url = `http://127.0.0.1:${port}/v1/chat/completions`;
 
-  const agent = modelTransport(600);
-  const started = Date.now();
-  const err = await undiciFetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: 'POST', body: '{}', dispatcher: agent,
-  }).then(() => null, (e: unknown) => e);
-  const took = Date.now() - started;
+    // Two settings, because one proves less than it looks. A single request is
+    // bounded by *some* timeout, and five seconds is satisfied by a hard-coded
+    // one that ignores the config entirely. Two requests whose windows do not
+    // overlap can only both hold if the configured value is the one applied.
+    const quick = await gaveUpAfter(300, url);
+    const slow = await gaveUpAfter(1_200, url);
 
-  assert.ok(err, 'the stub never replies, so the request must not have resolved');
-  assert.match(String(err), /fetch failed/);
-  // The specific failure the configured timeout is meant to replace: headers
-  // that never arrive. Not a connection error, which would prove nothing.
-  assert.equal((err as { cause?: { code?: string } }).cause?.code, 'UND_ERR_HEADERS_TIMEOUT');
-  assert.ok(took < 5_000, `gave up after ${took}ms, so the configured 600ms is not what applied`);
-
-  agent.close();
-  await new Promise<void>((r) => server.close(() => r()));
+    for (const [configured, { took, err }] of [[300, quick], [1_200, slow]] as const) {
+      assert.ok(err, `the stub never replies, so the ${configured}ms request must not resolve`);
+      assert.match(String(err), /fetch failed/);
+      // Headers that never arrive: the failure the configured timeout is meant
+      // to produce, not a connection error, which would prove nothing.
+      assert.equal(causeCode(err), 'UND_ERR_HEADERS_TIMEOUT');
+      // Not before it was told to give up, and not long after. The windows
+      // ([300,1100) and [1200,2000)) are disjoint by construction.
+      assert.ok(
+        took >= configured && took < configured + 800,
+        `configured ${configured}ms but gave up after ${took}ms`,
+      );
+    }
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
 });
