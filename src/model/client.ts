@@ -1,3 +1,4 @@
+import { Agent, fetch as undiciFetch } from 'undici';
 import { envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -41,6 +42,26 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** ~4 chars per token is close enough for budgeting, and needs no tokenizer. */
 export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
+/**
+ * The transport the model request goes through, with limits that follow the
+ * configuration.
+ *
+ * Node's global `fetch` is undici, whose default `headersTimeout` is 300s and
+ * is not reachable from anything the caller passes. So `requestTimeoutMs` was
+ * never the timeout that applied: an endpoint slower than five minutes to
+ * produce response headers failed as `TypeError: fetch failed` long before the
+ * configured abort could fire, and raising the setting changed nothing. The
+ * request is not streaming (the reply is read with `res.json()`), so the server
+ * sends no headers until it has finished generating — which made that default a
+ * cap on total generation time, and made a slow local endpoint unusable.
+ *
+ * Going through undici directly is what lets the configured value apply. The
+ * agent is held for the life of the client; undici unrefs idle sockets, so it
+ * does not keep the process alive.
+ */
+export function modelTransport(requestTimeoutMs: number): Agent {
+  return new Agent({ headersTimeout: requestTimeoutMs, bodyTimeout: requestTimeoutMs });
+}
 
 export class ModelClient {
   private totalPrompt = 0;
@@ -48,7 +69,11 @@ export class ModelClient {
   /** Round-robin cursor over the replica list. */
   private next = 0;
 
-  constructor(private cfg: ReviewpassConfig) {}
+  private readonly transport: Agent;
+
+  constructor(private cfg: ReviewpassConfig) {
+    this.transport = modelTransport(cfg.model.requestTimeoutMs);
+  }
 
   /**
    * The endpoints to spread work over. Replicas are independent servers holding
@@ -210,7 +235,7 @@ export class ModelClient {
       // A retry moves to the next replica: if one is wedged, the other answers.
       const endpoint = this.pickEndpoint();
       try {
-        const res = await fetch(`${endpoint}/chat/completions`, {
+        const res = await undiciFetch(`${endpoint}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -218,6 +243,7 @@ export class ModelClient {
           },
           body: JSON.stringify(body),
           signal: ctl.signal,
+          dispatcher: this.transport,
         });
         if (!res.ok) {
           const text = await res.text();
