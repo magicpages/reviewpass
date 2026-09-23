@@ -478,10 +478,14 @@ export class GitHubClient {
    */
   async findWalkthroughId(number: number): Promise<number | undefined> {
     try {
-      const { data } = await this.kit.rest.issues.listComments({
+      // Every page, as `loadExistingReview` already does. A single page is the
+      // oldest hundred comments, so on a busy pull request a note posted after
+      // them is invisible to the lookup — and the upsert below would then create
+      // the duplicate this exists to prevent.
+      const comments = await this.kit.paginate(this.kit.rest.issues.listComments, {
         owner: this.owner, repo: this.repo, issue_number: number, per_page: 100,
       });
-      return data.find((c) => isWalkthroughComment(c.body ?? ''))?.id;
+      return comments.find((c) => isWalkthroughComment(c.body ?? ''))?.id;
     } catch {
       return undefined;
     }
@@ -558,16 +562,30 @@ export class GitHubClient {
     } catch { /* the review is posted; failing to close the check must not undo it */ }
   }
 
-  async upsertWalkthrough(number: number, body: string, existingId?: number): Promise<void> {
-    if (existingId) {
+  /**
+   * Write the walkthrough comment, and say which one it wrote.
+   *
+   * A run posts the progress note first and the review second. Returning the id
+   * lets the caller hand it to the second call, so the common path never
+   * depends on reading back a comment written moments earlier — the listing is
+   * not guaranteed to show it yet, and a miss creates the duplicate this exists
+   * to prevent. The lookup stays as the fallback for a run that inherited a
+   * comment it did not write.
+   */
+  async upsertWalkthrough(
+    number: number, body: string, existingId?: number,
+  ): Promise<number | undefined> {
+    const id = existingId ?? await this.findWalkthroughId(number);
+    if (id) {
       await this.kit.rest.issues.updateComment({
-        owner: this.owner, repo: this.repo, comment_id: existingId, body,
+        owner: this.owner, repo: this.repo, comment_id: id, body,
       });
-      return;
+      return id;
     }
-    await this.kit.rest.issues.createComment({
+    const { data } = await this.kit.rest.issues.createComment({
       owner: this.owner, repo: this.repo, issue_number: number, body,
     });
+    return data?.id;
   }
 
   /** Resolve reviewpass's own threads whose finding no longer reproduces. */
