@@ -10,6 +10,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { GitHubClient, actionsRunUrl } from '../src/github/client.js';
+import { renderCheckVerdict } from '../src/review/render.js';
 
 function clientWithChecks(createFails = false) {
   const created: Record<string, unknown>[] = [];
@@ -78,5 +79,46 @@ describe('actionsRunUrl', () => {
     } finally {
       process.env = saved;
     }
+  });
+});
+
+describe('how a finished review closes its check', () => {
+  const base = {
+    findings: [], fileGroups: [], checks: [], skipped: [],
+    effort: { score: 1, label: 'Trivial' }, mergeRisk: 'minimal', event: 'COMMENT',
+    walkthrough: '',
+  } as unknown as Parameters<typeof renderCheckVerdict>[0];
+  const result = (over: Record<string, unknown>) =>
+    renderCheckVerdict({ ...base, ...over } as Parameters<typeof renderCheckVerdict>[0]);
+
+  test('never closes green over a pull request nothing read', () => {
+    // Every file failed. The job calls setFailed here, so a green check would
+    // put a passing tick on code no model looked at.
+    const v = result({ reviewedFiles: 0, failedFiles: 12 });
+    assert.equal(v.conclusion, 'failure');
+    assert.match(v.title, /No file could be reviewed/);
+  });
+
+  test('a blocked run is not the author\'s fault, so it is not red', () => {
+    const v = result({ blocked: { message: 'The model endpoint could not be reached.' }, failedFiles: 3 });
+    assert.equal(v.conclusion, 'neutral');
+    assert.match(v.summary, /could not be reached/);
+  });
+
+  test('nothing reviewable is neutral, not a pass and not a failure', () => {
+    const v = result({ reviewedFiles: 0, failedFiles: 0 });
+    assert.equal(v.conclusion, 'neutral');
+  });
+
+  test('a real review passes, and says what it found', () => {
+    assert.deepEqual(
+      { c: result({ reviewedFiles: 4, failedFiles: 0 }).conclusion,
+        t: result({ reviewedFiles: 4, failedFiles: 0 }).title },
+      { c: 'success', t: 'Nothing to raise' },
+    );
+    const two = result({ reviewedFiles: 4, failedFiles: 1, findings: [{}, {}] });
+    assert.equal(two.conclusion, 'success');
+    assert.equal(two.title, '2 findings');
+    assert.match(two.summary, /4 file\(s\) reviewed, 1 failed/);
   });
 });

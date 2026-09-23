@@ -134,20 +134,9 @@ async function standalone(token: string, prNumber: number, selfLogin?: string, f
   }
 
   if (checkId) {
-    const n = outcome.result.findings.length;
-    // A blocked run is not the author's fault — an exhausted account, a rejected
-    // key, an endpoint that is down — so it closes neutral rather than red, the
-    // same reasoning as the warning below.
-    await (outcome.result.blocked
-      ? checks.finishCheck(
-          checkId, 'neutral', 'Nothing was reviewed', outcome.result.blocked.message)
-      : checks.finishCheck(
-          checkId,
-          'success',
-          n === 0 ? 'Nothing to raise' : `${n} finding${n === 1 ? '' : 's'}`,
-          `${outcome.result.reviewedFiles ?? 0} file(s) reviewed, `
-            + `${outcome.result.failedFiles ?? 0} failed.`,
-        ));
+    const { renderCheckVerdict } = await import('./review/render.js');
+    const v = renderCheckVerdict(outcome.result);
+    await checks.finishCheck(checkId, v.conclusion, v.title, v.summary);
   }
 
   core.info(
