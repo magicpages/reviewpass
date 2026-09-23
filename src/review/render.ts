@@ -20,6 +20,47 @@ const SEVERITY_LABEL = {
   critical: 'critical', major: 'major', minor: 'minor', trivial: 'trivial',
 } as const;
 
+/**
+ * How a finished review closes its check run.
+ *
+ * The check must never be greener than the job. A run where every file failed
+ * sets the job to failed, so closing `success` there would put a green tick on
+ * a pull request nothing read — the exact failure the check exists to make
+ * visible, reintroduced by the thing meant to reveal it.
+ *
+ * Blocked closes neutral rather than red. An exhausted account, a rejected key
+ * or an endpoint that is down is never the author's fault, and a red check on
+ * their pull request says it is.
+ */
+export function renderCheckVerdict(r: ReviewResult): {
+  conclusion: 'success' | 'neutral' | 'failure';
+  title: string;
+  summary: string;
+} {
+  const reviewed = r.reviewedFiles ?? 0;
+  const failed = r.failedFiles ?? 0;
+  const counted = `${reviewed} file(s) reviewed, ${failed} failed.`;
+
+  if (r.blocked) {
+    return { conclusion: 'neutral', title: 'Nothing was reviewed', summary: r.blocked.message };
+  }
+  if (reviewed === 0) {
+    return failed > 0
+      ? { conclusion: 'failure', title: 'No file could be reviewed', summary: counted }
+      : {
+          conclusion: 'neutral',
+          title: 'Nothing to review',
+          summary: 'Nothing in this update is a file it reviews.',
+        };
+  }
+  const n = r.findings.length;
+  return {
+    conclusion: 'success',
+    title: n === 0 ? 'Nothing to raise' : `${n} finding${n === 1 ? '' : 's'}`,
+    summary: counted,
+  };
+}
+
 /** The standalone walkthrough comment, updated in place across runs. */
 export function renderWalkthrough(pr: PullRequestContext, r: ReviewResult): string {
   const out: string[] = [WALKTHROUGH_MARKER, `<!-- reviewpass:sha:${pr.headSha} -->`, ''];
