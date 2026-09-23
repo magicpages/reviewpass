@@ -72,6 +72,9 @@ export interface PullRequestContext {
   reviewedTo: string;
   isIncremental: boolean;
   linkedIssues: number[];
+  /** Whether it was already merged or closed when this review read it. */
+  closed: boolean;
+  merged: boolean;
   /**
    * What the linked issues say, when they are readable.
    *
