@@ -69,3 +69,38 @@ describe('isStillOpen, asked again part-way through a review', () => {
     assert.equal(await client({}, true).isStillOpen(1), true);
   });
 });
+
+describe('renewing the App token before posting', () => {
+  function clientWithRenew(renew?: () => Promise<string>) {
+    const c = new GitHubClient('first-token', 'o', 'r', 'reviewpass[bot]', renew);
+    return c;
+  }
+
+  test('swaps in a fresh token when the caller knows how', async () => {
+    let minted = 0;
+    const c = clientWithRenew(async () => { minted++; return 'second-token'; });
+    const before = (c as unknown as { kit: unknown }).kit;
+
+    assert.equal(await c.renewAuth(), true);
+    assert.equal(minted, 1, 'a fresh token must actually be requested');
+    assert.notEqual((c as unknown as { kit: unknown }).kit, before,
+      'the client must use the new token, not merely fetch one');
+  });
+
+  test('a run with no App credentials carries on unchanged', async () => {
+    const c = clientWithRenew(undefined);
+    const before = (c as unknown as { kit: unknown }).kit;
+    assert.equal(await c.renewAuth(), false);
+    assert.equal((c as unknown as { kit: unknown }).kit, before);
+  });
+
+  test('a failed renewal does not throw away the review', async () => {
+    // The existing token may still have minutes left, and it is the only chance
+    // of posting seventy-eight minutes of work.
+    const c = clientWithRenew(async () => { throw new Error('502 from GitHub'); });
+    const before = (c as unknown as { kit: unknown }).kit;
+    assert.equal(await c.renewAuth(), false);
+    assert.equal((c as unknown as { kit: unknown }).kit, before,
+      'a failed renewal must leave the working client in place');
+  });
+});

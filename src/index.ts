@@ -71,6 +71,23 @@ async function viaDaemon(url: string, token: string, prNumber: number): Promise<
   core.setOutput('event', result.event);
 }
 
+/**
+ * Mints a fresh App token, when this run was configured with App credentials.
+ *
+ * An installation token lasts an hour. A review on one card routinely runs
+ * longer, and the token is only needed at the very end — so the run does all
+ * the work and is then rejected posting it.
+ */
+function tokenRenewer(owner: string, repo: string): (() => Promise<string>) | undefined {
+  const appId = core.getInput('app-id')?.trim();
+  const privateKey = core.getInput('private-key')?.trim();
+  if (!appId || !privateKey) return undefined;
+  return async () => {
+    const { appToken } = await import('./github/auth.js');
+    return (await appToken(appId, privateKey, owner, repo)).token;
+  };
+}
+
 async function standalone(token: string, prNumber: number, selfLogin?: string, forceFull = false): Promise<void> {
   const ctx = github.context;
   const profile = core.getInput('profile');
@@ -111,6 +128,7 @@ async function standalone(token: string, prNumber: number, selfLogin?: string, f
     outcome = await runReview({
       token,
       selfLogin,
+      renewToken: tokenRenewer(ctx.repo.owner, ctx.repo.repo),
       owner: ctx.repo.owner,
       repo: ctx.repo.repo,
       prNumber,
