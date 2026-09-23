@@ -96,7 +96,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number
 /** Anything that can supply changes and accept a review. */
 export type ReviewSource = Pick<GitHubClient,
   'loadPullRequest' | 'loadExistingReview' | 'planComments' | 'currentHeadSha' |
-  'submitReview' | 'upsertWalkthrough' | 'resolveThreads' | 'dismissStaleReviews'>
+  'submitReview' | 'upsertWalkthrough' | 'resolveThreads' | 'dismissStaleReviews' |
+  'isStillOpen'>
   & { raw?: unknown };
 
 export interface RunOptions {
@@ -261,6 +262,33 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     } catch { /* not a git checkout; nothing to compare against */ }
   }
 
+  /**
+   * Give up on a pull request that is already done with.
+   *
+   * The queue on one card runs hours deep, so a pull request can land before
+   * its review reaches the front, or a minute into one — reviewpass#16 merged
+   * at 14:38 and the review of it kept working until 15:05, then posted six
+   * findings onto code already in main. Everything after the merge is spent on
+   * the base branch while whatever is behind it in the queue waits.
+   */
+  const giveUp = (why: string): RunOutcome => {
+    const none: ReviewResult = {
+      findings: [], walkthrough: `Not reviewed: ${why}`, fileGroups: [],
+      effort: { score: 1, label: 'Trivial' }, mergeRisk: 'minimal',
+      checks: [], event: 'COMMENT', skipped: [],
+    };
+    return {
+      pr, result: none, plan: { anchored: [], unanchored: [] },
+      walkthrough: none.walkthrough, summary: none.walkthrough,
+      posted: 0, resolved: 0, usage: model.usage, candidates: 0, refuted: [],
+    };
+  };
+
+  if (pr.closed) {
+    log.info(`#${prNumber} is already ${pr.merged ? 'merged' : 'closed'}; not reviewing it.`);
+    return giveUp('the pull request was already closed.');
+  }
+
   const prior = await gh.loadExistingReview(prNumber);
 
   log.info(
@@ -298,6 +326,21 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       log.warn(`could not post the progress note: ${String(err).slice(0, 120)}`);
     }
   }
+
+  /**
+   * Replace the progress note when the review stops early.
+   *
+   * Leaving "Reviewing this pull request" on a merged pull request is a status
+   * that lies, the same failure as reporting "Nothing to raise" for a review
+   * that never ran.
+   */
+  const noteGaveUp = async (why: string): Promise<void> => {
+    if (opts.dryRun || !cfg.review.postWalkthrough) return;
+    try {
+      await gh.upsertWalkthrough(
+        prNumber, renderProgressNotice(pr, { kind: 'nothing', reason: why }), walkthroughId);
+    } catch { /* the review already stopped; this is only the note */ }
+  };
 
   if (!selected.length) {
     const empty: ReviewResult = {
@@ -555,6 +598,13 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     // opposite verdicts.
     const regions = groupByRegion(grounded);
     const multi = regions.filter((g) => g.length > 1).length;
+    // Verification reads whole files and is the expensive half, so it is worth
+    // asking once more before paying for it.
+    if (!await gh.isStillOpen(prNumber)) {
+      log.info(`#${prNumber} closed during the review; stopping before verification.`);
+      await noteGaveUp('it was merged or closed before the review finished.');
+      return giveUp('it was merged or closed before the review finished.');
+    }
     if (multi) log.info(`Verifying ${regions.length} regions (${multi} with several findings)`);
     const verified = (await mapLimit(regions, concurrency,
       (g) => verifyGroup(model, cfg, g, unitByPath.get(g[0]!.path)!, pr, {
@@ -638,6 +688,13 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
         findings.map((f) => `**\`${f.path}\`:${f.startLine}** — ${f.title}\n\n${f.body}`).join('\n\n---\n\n') +
         '\n\n</details>'
       : summary;
+    // The last word before anything is posted: it may have landed during
+    // verification, which is the longest stretch of the run.
+    if (!await gh.isStillOpen(prNumber)) {
+      log.info(`#${prNumber} closed during the review; not posting.`);
+      await noteGaveUp('it was merged or closed before the review finished.');
+      return giveUp('it was merged or closed before the review finished.');
+    }
     // Whatever this review concludes, an earlier blocking verdict that no longer
     // reflects the code must not survive it.
     if (event !== 'REQUEST_CHANGES') {

@@ -108,6 +108,9 @@ export class LocalSource {
     return { posted: 0, degraded: false };
   }
   async upsertWalkthrough(): Promise<number | undefined> { return undefined; /* nothing to post to */ }
+
+  /** A local run has no pull request that anyone could merge underneath it. */
+  async isStillOpen(): Promise<boolean> { return true; }
   async resolveThreads(): Promise<number> { return 0; }
   /** Nothing was ever submitted locally, so nothing can be stale. */
   async dismissStaleReviews(): Promise<number> { return 0; }

@@ -162,6 +162,8 @@ export class GitHubClient {
       reviewedTo: head,
       isIncremental: useIncremental,
       linkedIssues: issues,
+      closed: pr.state === 'closed',
+      merged: Boolean(pr.merged_at),
       intent: await this.readIntent(issues),
     };
   }
@@ -242,6 +244,28 @@ export class GitHubClient {
       owner: this.owner, repo: this.repo, basehead: `${base}...${head}`,
     });
     return (data.files ?? []).map((f) => this.toChangedFile(f));
+  }
+
+  /**
+   * Whether the pull request is still worth reviewing.
+   *
+   * A review takes tens of minutes on one card, and a pull request can be
+   * merged a minute into it. Everything after that point is spent on code that
+   * is already in the base branch, and the findings land where nobody is
+   * looking — while whatever is behind it in the queue waits.
+   *
+   * Answers true when it cannot tell. Losing a finished review to a failed
+   * status call is the worse mistake of the two.
+   */
+  async isStillOpen(number: number): Promise<boolean> {
+    try {
+      const { data } = await this.kit.rest.pulls.get({
+        owner: this.owner, repo: this.repo, pull_number: number,
+      });
+      return data.state === 'open';
+    } catch {
+      return true;
+    }
   }
 
   /** What reviewpass has already said on this PR — the basis for not repeating itself. */
