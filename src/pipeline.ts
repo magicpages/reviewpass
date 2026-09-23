@@ -97,7 +97,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number
 export type ReviewSource = Pick<GitHubClient,
   'loadPullRequest' | 'loadExistingReview' | 'planComments' | 'currentHeadSha' |
   'submitReview' | 'upsertWalkthrough' | 'resolveThreads' | 'dismissStaleReviews' |
-  'isStillOpen'>
+  'isStillOpen' | 'renewAuth'>
   & { raw?: unknown };
 
 export interface RunOptions {
@@ -106,6 +106,14 @@ export interface RunOptions {
   token: string;
   /** The login the token posts as, e.g. `reviewpass[bot]`. */
   selfLogin?: string;
+  /**
+   * Mints a fresh token. Supplied when the caller holds App credentials.
+   *
+   * An installation token lasts an hour and a review can run longer, so the
+   * one minted at startup may already be dead by the time there is something
+   * to post.
+   */
+  renewToken?: () => Promise<string>;
   owner: string;
   repo: string;
   prNumber: number;
@@ -227,7 +235,8 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   }
 
   // The source varies (a pull request, a local git range); the review does not.
-  const gh = opts.source ?? new GitHubClient(opts.token, owner, repo, opts.selfLogin);
+  const gh = opts.source
+    ?? new GitHubClient(opts.token, owner, repo, opts.selfLogin, opts.renewToken);
   const model = new ModelClient(cfg);
 
   const pr = await gh.loadPullRequest(
@@ -688,6 +697,11 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
         findings.map((f) => `**\`${f.path}\`:${f.startLine}** — ${f.title}\n\n${f.body}`).join('\n\n---\n\n') +
         '\n\n</details>'
       : summary;
+    // The token was minted when the run started and lasts an hour; this review
+    // may have taken longer. Renew before writing anything, because a review
+    // rejected at the final step is a review thrown away.
+    if (await gh.renewAuth()) log.info('Renewed the App token before posting');
+
     // The last word before anything is posted: it may have landed during
     // verification, which is the longest stretch of the run.
     if (!await gh.isStillOpen(prNumber)) {

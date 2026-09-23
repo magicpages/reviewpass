@@ -95,12 +95,44 @@ export class GitHubClient {
   private lastTitle = '';
   private lastBranch = '';
 
-  constructor(token: string, private owner: string, private repo: string, selfLogin?: string) {
+  constructor(
+    token: string,
+    private owner: string,
+    private repo: string,
+    selfLogin?: string,
+    /** Mints a fresh token, when the caller knows how. See `renewAuth`. */
+    private renew?: () => Promise<string>,
+  ) {
     // `baseUrl` rather than the default, so this runs against GitHub Enterprise
     // Server. Nothing read `GITHUB_API_URL` before, which made the tool unusable
     // for exactly the audience that self-hosts on purpose.
     this.kit = github.getOctokit(token, { baseUrl: apiBaseUrl() });
     this.selfLogin = selfLogin;
+  }
+
+  /**
+   * Swap in a freshly minted token.
+   *
+   * A GitHub App installation token lasts an hour, and it is minted once when
+   * the run starts. A review on one card routinely outlives that: on
+   * customer-portal#3451 the model work took seventy-eight minutes, and the
+   * review — twenty-one candidates, sixteen of them grounded — was thrown away
+   * at the final step with `Bad credentials`. The cost of that failure is the
+   * whole run, and it lands on the largest pull requests, which are the ones
+   * most worth reviewing.
+   *
+   * Called before posting rather than on a timer: that is where the token is
+   * needed and where losing it is unrecoverable. Best-effort — if renewing
+   * fails, the existing token is still worth trying.
+   */
+  async renewAuth(): Promise<boolean> {
+    if (!this.renew) return false;
+    try {
+      this.kit = github.getOctokit(await this.renew(), { baseUrl: apiBaseUrl() });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

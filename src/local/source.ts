@@ -111,6 +111,9 @@ export class LocalSource {
 
   /** A local run has no pull request that anyone could merge underneath it. */
   async isStillOpen(): Promise<boolean> { return true; }
+
+  /** No token to outlive the run. */
+  async renewAuth(): Promise<boolean> { return false; }
   async resolveThreads(): Promise<number> { return 0; }
   /** Nothing was ever submitted locally, so nothing can be stale. */
   async dismissStaleReviews(): Promise<number> { return 0; }
