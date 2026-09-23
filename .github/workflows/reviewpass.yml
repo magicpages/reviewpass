@@ -82,7 +82,14 @@ jobs:
 
       # Pinned like the checkout above. The reasoning that makes a mutable tag
       # a risk does not stop applying because the action is your own.
-      - uses: magicpages/reviewpass@3f1f9145c82fe6fe5fc5242efd8c0fbd9ddd73bf # v1.5.0
+      # Pinned to a commit: tags are mutable, so `@v1` trusts whoever can move it.
+      #
+      # This lagged at v1.5.0 for months while the action it pins was released
+      # eleven times. The repository was reviewing its own pull requests with code
+      # that predated every fix in them — #17 merged at 15:16 and its own review,
+      # running v1.5.0, posted at 15:25 onto the merged branch, which is exactly
+      # the bug #17 fixed. Dogfooding only counts if it is the current build.
+      - uses: magicpages/reviewpass@c2eaf72818a96b3f8c7ababd662c54783c5fb3e6 # v1.11.1
         with:
           # Posting as your own App makes approvals count toward branch
           # protection; github-actions[bot] approvals never do. Drop these two
