@@ -92,6 +92,20 @@ async function standalone(token: string, prNumber: number, selfLogin?: string, f
     } catch { /* the job already failed; do not fail it differently */ }
   };
 
+  // Announce the review on the pull request itself, not only in the Actions tab.
+  //
+  // A run started from a comment has its workflow on the default branch, so it
+  // never joins this pull request's check suite: the page says every check has
+  // passed while the review is still running. Best-effort — if the App has no
+  // `checks: write`, the review proceeds exactly as before.
+  const { GitHubClient: Client, actionsRunUrl } = await import('./github/client.js');
+  const checks = new Client(token, ctx.repo.owner, ctx.repo.repo, selfLogin);
+  const headSha = await checks.headShaOf(prNumber);
+  const checkId = headSha ? await checks.startCheck(headSha, actionsRunUrl()) : undefined;
+  if (headSha && !checkId) {
+    core.info('could not open a check run (the App may lack `checks: write`); reviewing anyway');
+  }
+
   let outcome: Awaited<ReturnType<typeof runReview>>;
   try {
     outcome = await runReview({
@@ -111,7 +125,29 @@ async function standalone(token: string, prNumber: number, selfLogin?: string, f
     });
   } catch (err) {
     await onCrash(err);
+    if (checkId) {
+      await checks.finishCheck(
+        checkId, 'failure', 'Review did not finish', String(err).slice(0, 400),
+      );
+    }
     throw err;
+  }
+
+  if (checkId) {
+    const n = outcome.result.findings.length;
+    // A blocked run is not the author's fault — an exhausted account, a rejected
+    // key, an endpoint that is down — so it closes neutral rather than red, the
+    // same reasoning as the warning below.
+    await (outcome.result.blocked
+      ? checks.finishCheck(
+          checkId, 'neutral', 'Nothing was reviewed', outcome.result.blocked.message)
+      : checks.finishCheck(
+          checkId,
+          'success',
+          n === 0 ? 'Nothing to raise' : `${n} finding${n === 1 ? '' : 's'}`,
+          `${outcome.result.reviewedFiles ?? 0} file(s) reviewed, `
+            + `${outcome.result.failedFiles ?? 0} failed.`,
+        ));
   }
 
   core.info(

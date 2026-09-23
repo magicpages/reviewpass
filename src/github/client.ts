@@ -26,6 +26,19 @@ export const isWalkthroughComment = (body: string): boolean =>
   body.includes(WALKTHROUGH_MARKER) || body.includes(LEGACY_WALKTHROUGH_MARKER);
 const FINDING_RE = /<!-- (?:reviewpass|warren):finding:([a-f0-9]+) -->/;
 
+/**
+ * Where this run can be watched, when the workflow tells us.
+ *
+ * Only set inside Actions; a local run has nothing to point at.
+ */
+export function actionsRunUrl(): string | undefined {
+  const server = process.env.GITHUB_SERVER_URL;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const run = process.env.GITHUB_RUN_ID;
+  return server && repo && run ? `${server}/${repo}/actions/runs/${run}` : undefined;
+}
+
+
 export interface InlineComment {
   path: string;
   body: string;
@@ -472,6 +485,77 @@ export class GitHubClient {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * The head commit of a pull request, without loading the whole thing.
+   *
+   * A check run has to be attached to a commit, and a review started from a
+   * comment has none to hand: `issue_comment` carries no `pull_request` object.
+   */
+  async headShaOf(number: number): Promise<string | undefined> {
+    try {
+      const { data } = await this.kit.rest.pulls.get({
+        owner: this.owner, repo: this.repo, pull_number: number,
+      });
+      return data.head.sha;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Announce the review as a check run on the head commit.
+   *
+   * A review triggered by a comment runs a workflow whose head is the default
+   * branch, so it never joins the pull request's check suite. The page reads
+   * "all checks have passed" while the review is still running, and the only
+   * sign of life is a note edited in place — which GitHub stamps with the time
+   * it was first written, so an hours-old timestamp sits above work that
+   * started a minute ago. A check run is the one surface that shows it.
+   *
+   * Best-effort: the App needs `checks: write`, and a review that cannot
+   * announce itself is still a review worth finishing.
+   */
+  async startCheck(headSha: string, detailsUrl?: string): Promise<number | undefined> {
+    try {
+      const { data } = await this.kit.rest.checks.create({
+        owner: this.owner,
+        repo: this.repo,
+        name: 'reviewpass',
+        head_sha: headSha,
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        ...(detailsUrl ? { details_url: detailsUrl } : {}),
+        output: {
+          title: 'Reviewing',
+          summary: 'Every finding is checked against the code before it is posted, '
+            + 'so this takes a few minutes.',
+        },
+      });
+      return data.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async finishCheck(
+    id: number,
+    conclusion: 'success' | 'neutral' | 'failure',
+    title: string,
+    summary: string,
+  ): Promise<void> {
+    try {
+      await this.kit.rest.checks.update({
+        owner: this.owner,
+        repo: this.repo,
+        check_run_id: id,
+        status: 'completed',
+        conclusion,
+        completed_at: new Date().toISOString(),
+        output: { title, summary },
+      });
+    } catch { /* the review is posted; failing to close the check must not undo it */ }
   }
 
   async upsertWalkthrough(number: number, body: string, existingId?: number): Promise<void> {
