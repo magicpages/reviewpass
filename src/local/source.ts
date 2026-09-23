@@ -107,7 +107,7 @@ export class LocalSource {
   async submitReview(): Promise<{ posted: number; degraded: boolean }> {
     return { posted: 0, degraded: false };
   }
-  async upsertWalkthrough(): Promise<void> { /* nothing to post to */ }
+  async upsertWalkthrough(): Promise<number | undefined> { return undefined; /* nothing to post to */ }
   async resolveThreads(): Promise<number> { return 0; }
   /** Nothing was ever submitted locally, so nothing can be stale. */
   async dismissStaleReviews(): Promise<number> { return 0; }

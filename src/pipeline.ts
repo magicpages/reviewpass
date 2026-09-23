@@ -282,9 +282,12 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
    * Best-effort throughout: failing to announce a review is not a reason to
    * skip it.
    */
+  // Carried to the final upsert so it updates this note rather than looking it
+  // up again and risking a second comment.
+  let walkthroughId = prior.walkthroughCommentId;
   if (!opts.dryRun && cfg.review.postWalkthrough) {
     try {
-      await gh.upsertWalkthrough(
+      walkthroughId = await gh.upsertWalkthrough(
         prNumber,
         renderProgressNotice(pr, selected.length
           ? { kind: 'started', files: selected.length, incremental: pr.isIncremental === true }
@@ -649,7 +652,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       await gh.upsertWalkthrough(
         prNumber,
         blocked ? renderProgressNotice(pr, { kind: 'blocked', message: blocked.message }) : walkthrough,
-        prior.walkthroughCommentId,
+        walkthroughId,
       );
     }
     const stillOpen = new Set(findings.map((f) => f.fingerprint!));
