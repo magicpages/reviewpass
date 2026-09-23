@@ -219,7 +219,7 @@ ${Hr.body}`).join(`
 
 </details>`:"",ni=`${C}
 
-> Inline comments could not be attached (${Fr.slice(0,200)}).${Jn}`,rs=B(Fr)?"COMMENT":S;return await Re(rs,void 0,ni),{posted:0,degraded:!0}}}async findWalkthroughId(c){try{let{data:_}=await this.kit.rest.issues.listComments({owner:this.owner,repo:this.repo,issue_number:c,per_page:100});return _.find(g=>Wxe(g.body??""))?.id}catch{return}}async upsertWalkthrough(c,_,g){if(g){await this.kit.rest.issues.updateComment({owner:this.owner,repo:this.repo,comment_id:g,body:_});return}await this.kit.rest.issues.createComment({owner:this.owner,repo:this.repo,issue_number:c,body:_})}async openRebuttals(c){let g=await this.kit.graphql(`query($owner:String!,$repo:String!,$number:Int!){
+> Inline comments could not be attached (${Fr.slice(0,200)}).${Jn}`,rs=B(Fr)?"COMMENT":S;return await Re(rs,void 0,ni),{posted:0,degraded:!0}}}async findWalkthroughId(c){try{let{data:_}=await this.kit.rest.issues.listComments({owner:this.owner,repo:this.repo,issue_number:c,per_page:100});return _.find(g=>Wxe(g.body??""))?.id}catch{return}}async upsertWalkthrough(c,_,g){let C=g??await this.findWalkthroughId(c);if(C){await this.kit.rest.issues.updateComment({owner:this.owner,repo:this.repo,comment_id:C,body:_});return}await this.kit.rest.issues.createComment({owner:this.owner,repo:this.repo,issue_number:c,body:_})}async openRebuttals(c){let g=await this.kit.graphql(`query($owner:String!,$repo:String!,$number:Int!){
       repository(owner:$owner,name:$repo){ pullRequest(number:$number){
         reviewThreads(first:100){ nodes {
           id isResolved path line

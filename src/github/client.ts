@@ -475,9 +475,14 @@ export class GitHubClient {
   }
 
   async upsertWalkthrough(number: number, body: string, existingId?: number): Promise<void> {
-    if (existingId) {
+    // A run posts the progress note first and the review second, and the id of
+    // the comment it just created is not carried between the two. Without the
+    // lookup the second call creates a second comment, so a pull request ends
+    // up with "Reviewing this pull request" sitting above its own result.
+    const id = existingId ?? await this.findWalkthroughId(number);
+    if (id) {
       await this.kit.rest.issues.updateComment({
-        owner: this.owner, repo: this.repo, comment_id: existingId, body,
+        owner: this.owner, repo: this.repo, comment_id: id, body,
       });
       return;
     }
