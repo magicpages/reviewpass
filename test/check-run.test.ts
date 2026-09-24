@@ -128,7 +128,13 @@ describe('when a check run is worth opening at all', () => {
     // customer-portal#3453 showed both at once: "reviewpass — Reviewing" sitting
     // above "reviewpass / review (pull_request)", which reads as two reviews.
     assert.equal(workflowCheckIsOnTheCommit('pull_request'), true);
-    assert.equal(workflowCheckIsOnTheCommit('pull_request_target'), true);
+  });
+
+  test('yes on pull_request_target, whose job check lands on the default branch', () => {
+    // GITHUB_SHA is the last commit on the default branch for this event, so the
+    // job check is not on the pull request head and the review would otherwise
+    // show nothing at all.
+    assert.equal(workflowCheckIsOnTheCommit('pull_request_target'), false);
   });
 
   test('yes on the comment events, where nothing else marks the pull request', () => {

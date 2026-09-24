@@ -30,15 +30,22 @@ const FINDING_RE = /<!-- (?:reviewpass|warren):finding:([a-f0-9]+) -->/;
  * Whether this event's own workflow check already sits on the pull request.
  *
  * A `pull_request` run's job check is attached to the head commit and shows up
- * on the pull request by itself. A run from a comment takes its workflow from
- * the default branch, so its check never joins this pull request's suite — that
- * is the case a check run exists to cover, and the only one.
- *
- * Adding one where the job check is already there puts two entries with the
+ * on the pull request by itself. Adding another there puts two entries with the
  * same name side by side and reads as two reviews running at once.
+ *
+ * `pull_request_target` is NOT one of these, however much it looks like it:
+ * GitHub sets its `GITHUB_SHA` to the last commit on the default branch, so its
+ * job check lands there rather than on the pull request head, and suppressing
+ * the check run would leave that review with nothing to show on the pull
+ * request — the very failure this exists to fix.
+ *
+ * The two mistakes are not equal, which is what decides the default. Answering
+ * `false` when the job check is in fact visible costs a duplicate entry.
+ * Answering `true` when it is not costs the review any sign of life at all. So
+ * only the one event that is certain answers `true`.
  */
 export function workflowCheckIsOnTheCommit(eventName: string): boolean {
-  return eventName === 'pull_request' || eventName === 'pull_request_target';
+  return eventName === 'pull_request';
 }
 
 /**
