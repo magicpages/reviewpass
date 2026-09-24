@@ -37,7 +37,7 @@ export interface ReviewpassConfig {
      * hypothetical — one file drew 212,651 characters of reasoning and never
      * reached an answer.
      */
-    reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+    reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
     /**
      * Extra routing sent verbatim with every request, for brokers that accept
      * it. Shape is the broker's, not ours: this does not interpret it.
@@ -234,7 +234,22 @@ function merge<T>(base: T, over: unknown): T {
 export const envAny = (suffix: string): string | undefined =>
   process.env[`REVIEWPASS_${suffix}`] ?? process.env[`WARREN_${suffix}`];
 
-const EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+/**
+ * Effort levels, across the backends this talks to — they do not agree.
+ *
+ * Ollama takes none/low/medium/high. Qwen3.8 through llama.cpp takes only
+ * low/medium/xhigh and *defaults to xhigh*, the most expensive one, which is
+ * why it is listed: an operator has to be able to name the default to move off
+ * it deliberately.
+ *
+ * `high` is kept for Ollama but is a trap on Qwen3.8: its template neither
+ * accepts nor rejects it cleanly, and the model degenerates instead — measured
+ * at 46,852 characters of answer over 303 seconds against 1,857 characters in
+ * 61 seconds at a level it knows. The value that suits one backend is not
+ * inert on another, so this list cannot be narrowed to the safe intersection
+ * without breaking the other.
+ */
+const EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
 
 /**
  * The effort value, or nothing at all.

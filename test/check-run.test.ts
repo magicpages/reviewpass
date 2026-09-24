@@ -9,7 +9,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { GitHubClient, actionsRunUrl } from '../src/github/client.js';
+import { GitHubClient, actionsRunUrl, workflowCheckIsOnTheCommit } from '../src/github/client.js';
 import { renderCheckVerdict } from '../src/review/render.js';
 
 function clientWithChecks(createFails = false) {
@@ -120,5 +120,28 @@ describe('how a finished review closes its check', () => {
     assert.equal(two.conclusion, 'success');
     assert.equal(two.title, '2 findings');
     assert.match(two.summary, /4 file\(s\) reviewed, 1 failed/);
+  });
+});
+
+describe('when a check run is worth opening at all', () => {
+  test('not on a pull_request event, whose own job check is already there', () => {
+    // customer-portal#3453 showed both at once: "reviewpass — Reviewing" sitting
+    // above "reviewpass / review (pull_request)", which reads as two reviews.
+    assert.equal(workflowCheckIsOnTheCommit('pull_request'), true);
+  });
+
+  test('yes on pull_request_target, whose job check lands on the default branch', () => {
+    // GITHUB_SHA is the last commit on the default branch for this event, so the
+    // job check is not on the pull request head and the review would otherwise
+    // show nothing at all.
+    assert.equal(workflowCheckIsOnTheCommit('pull_request_target'), false);
+  });
+
+  test('yes on the comment events, where nothing else marks the pull request', () => {
+    // These run the workflow from the default branch, so their job check never
+    // joins this pull request's suite — the case the check run exists for.
+    assert.equal(workflowCheckIsOnTheCommit('issue_comment'), false);
+    assert.equal(workflowCheckIsOnTheCommit('pull_request_review_comment'), false);
+    assert.equal(workflowCheckIsOnTheCommit('workflow_dispatch'), false);
   });
 });
