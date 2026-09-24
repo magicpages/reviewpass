@@ -27,6 +27,21 @@ export const isWalkthroughComment = (body: string): boolean =>
 const FINDING_RE = /<!-- (?:reviewpass|warren):finding:([a-f0-9]+) -->/;
 
 /**
+ * Whether this event's own workflow check already sits on the pull request.
+ *
+ * A `pull_request` run's job check is attached to the head commit and shows up
+ * on the pull request by itself. A run from a comment takes its workflow from
+ * the default branch, so its check never joins this pull request's suite — that
+ * is the case a check run exists to cover, and the only one.
+ *
+ * Adding one where the job check is already there puts two entries with the
+ * same name side by side and reads as two reviews running at once.
+ */
+export function workflowCheckIsOnTheCommit(eventName: string): boolean {
+  return eventName === 'pull_request' || eventName === 'pull_request_target';
+}
+
+/**
  * Where this run can be watched, when the workflow tells us.
  *
  * Only set inside Actions; a local run has nothing to point at.
