@@ -23,13 +23,21 @@ import {
  * as before.
  */
 export function verifyBudget(fallback: number): number {
-  const n = Number(envAny('VERIFY_MAX_TOKENS'));
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  // `Number('')` and `Number('   ')` are both 0, so an empty variable would
+  // otherwise read as a deliberate zero. And `max_tokens` is a token count:
+  // 2048.5 satisfies isFinite and is not a ceiling any server can honour.
+  const raw = envAny('VERIFY_MAX_TOKENS')?.trim();
+  const n = Number(raw);
+  return raw && Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
 export function verifyTemperature(cfg: ReviewpassConfig): number | undefined {
-  const n = Number(envAny('VERIFY_TEMPERATURE'));
-  return Number.isFinite(n) && n >= 0 ? n : cfg.model.temperature;
+  // Same empty-string trap, and here it matters more: an unset variable would
+  // silently pin verification to greedy decoding, which is the one setting
+  // Qwen documents as harmful in thinking mode. `'0'` stays a valid choice.
+  const raw = envAny('VERIFY_TEMPERATURE')?.trim();
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n >= 0 ? n : cfg.model.temperature;
 }
 
 const SEVERITY_RANK = { trivial: 0, minor: 1, major: 2, critical: 3 } as const;
