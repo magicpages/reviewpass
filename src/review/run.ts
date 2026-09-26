@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ModelClient } from '../model/client.js';
 import type { ReviewpassConfig } from '../config/index.js';
+import { envAny } from '../config/index.js';
 import type { Finding, PullRequestContext, ReviewUnit, PreMergeCheck } from '../types.js';
 import {
   FINDINGS_SCHEMA, VERDICT_SCHEMA, GROUP_VERDICT_SCHEMA, WALKTHROUGH_SCHEMA, CHECKS_SCHEMA, type RawFinding,
@@ -9,6 +10,27 @@ import {
   REVIEWER_SYSTEM, VERIFIER_SYSTEM, WALKTHROUGH_SYSTEM, CHECKS_SYSTEM,
   buildFindingPrompt, buildVerifyPrompt, buildGroupVerifyPrompt, truncate,
 } from './prompt.js';
+
+/**
+ * How much room a verify call gets, and how cold it runs.
+ *
+ * Both were fixed constants, which made the reasoning budget a trap: a model
+ * configured to think up to 4096 tokens inside a 2048-token response can spend
+ * the whole allowance thinking and never reach a verdict. The ceiling has to be
+ * movable to sit above whatever budget the server is running.
+ *
+ * Defaults are exactly the previous constants, so an unset environment behaves
+ * as before.
+ */
+export function verifyBudget(fallback: number): number {
+  const n = Number(envAny('VERIFY_MAX_TOKENS'));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function verifyTemperature(cfg: ReviewpassConfig): number | undefined {
+  const n = Number(envAny('VERIFY_TEMPERATURE'));
+  return Number.isFinite(n) && n >= 0 ? n : cfg.model.temperature;
+}
 
 const SEVERITY_RANK = { trivial: 0, minor: 1, major: 2, critical: 3 } as const;
 
@@ -305,7 +327,8 @@ export async function verify(
         { role: 'user', content: prompt },
       ],
       VERDICT_SCHEMA,
-      { schemaName: 'verdict', model: cfg.model.verifyModel ?? cfg.model.name, maxTokens: 2048 },
+      { schemaName: 'verdict', model: cfg.model.verifyModel ?? cfg.model.name,
+        maxTokens: verifyBudget(2048), temperature: verifyTemperature(cfg) },
     );
 
     // Two gates, and only two: is it true, and does it belong on this change.
@@ -549,7 +572,8 @@ export async function verifyGroup(
     }>(
       [{ role: 'system', content: VERIFIER_SYSTEM }, { role: 'user', content: prompt }],
       GROUP_VERDICT_SCHEMA,
-      { schemaName: 'group_verdict', model: cfg.model.verifyModel ?? cfg.model.name, maxTokens: 4096 },
+      { schemaName: 'group_verdict', model: cfg.model.verifyModel ?? cfg.model.name,
+        maxTokens: verifyBudget(4096), temperature: verifyTemperature(cfg) },
     );
 
     const byIndex = new Map(value.verdicts.map((v) => [v.index, v]));
