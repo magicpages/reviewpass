@@ -5,6 +5,9 @@
  * `required`, which is what strict mode demands.
  */
 
+export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
+export const CATEGORIES = ['correctness', 'security', 'data', 'stability', 'performance', 'maintainability'] as const;
+
 export const FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -19,11 +22,8 @@ export const FINDINGS_SCHEMA = {
         properties: {
           start_line: { type: 'integer', description: 'First line of the defect in the NEW file' },
           end_line: { type: 'integer', description: 'Last line of the defect in the NEW file' },
-          severity: { type: 'string', enum: ['critical', 'major', 'minor', 'trivial'] },
-          category: {
-            type: 'string',
-            enum: ['correctness', 'security', 'data', 'stability', 'performance', 'maintainability'],
-          },
+          severity: { type: 'string', enum: SEVERITIES },
+          category: { type: 'string', enum: CATEGORIES },
           title: { type: 'string', description: 'One imperative sentence naming the fix' },
           body: { type: 'string', description: 'Why this is wrong and what breaks. 1-4 sentences.' },
           suggestion: {
@@ -225,8 +225,8 @@ export const CHECKS_SCHEMA = {
 export interface RawFinding {
   start_line: number;
   end_line: number;
-  severity: 'critical' | 'major' | 'minor' | 'trivial';
-  category: 'correctness' | 'security' | 'data' | 'stability' | 'performance' | 'maintainability';
+  severity: typeof SEVERITIES[number];
+  category: typeof CATEGORIES[number];
   title: string;
   body: string;
   suggestion: string;

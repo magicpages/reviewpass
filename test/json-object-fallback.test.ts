@@ -141,3 +141,29 @@ test('usable findings survive when others in the same reply are malformed', asyn
     assert.equal(found[0]!.title, 'Guard the empty list');
   });
 });
+
+test('a null entry in the findings array costs nothing but itself', async () => {
+  const withNull = JSON.stringify({ findings: [
+    { start_line: 10, end_line: 10, severity: 'minor', category: 'correctness', title: 'Guard the empty list', body: 'items may be empty.' },
+    null,
+  ] });
+  await withStub((_b, res) => reply(res, withNull), async (base) => {
+    const cfg = config(base);
+    const found = await findInFile(new ModelClient(cfg), cfg, pr, unit);
+    assert.equal(found.length, 1);
+    assert.equal(found[0]!.title, 'Guard the empty list');
+  });
+});
+
+test('a finding without the labels the schema allows is kept, filed as major correctness', async () => {
+  const unlabelled = JSON.stringify({ findings: [
+    { start_line: 10, end_line: 10, title: 'Guard the empty list', body: 'items may be empty.' },
+    { start_line: 10, end_line: 10, severity: 'high', category: 'bug', title: 'Check the count', body: 'Off by one.' },
+  ] });
+  await withStub((_b, res) => reply(res, unlabelled), async (base) => {
+    const cfg = config(base);
+    const found = await findInFile(new ModelClient(cfg), cfg, pr, unit);
+    assert.equal(found.length, 2, 'dropping them over a label would be the false all-clear again');
+    for (const f of found) assert.deepEqual([f.severity, f.category], ['major', 'correctness']);
+  });
+});
