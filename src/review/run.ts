@@ -4,7 +4,8 @@ import type { ReviewpassConfig } from '../config/index.js';
 import { envAny } from '../config/index.js';
 import type { Finding, PullRequestContext, ReviewUnit, PreMergeCheck } from '../types.js';
 import {
-  FINDINGS_SCHEMA, VERDICT_SCHEMA, GROUP_VERDICT_SCHEMA, WALKTHROUGH_SCHEMA, CHECKS_SCHEMA, type RawFinding,
+  FINDINGS_SCHEMA, VERDICT_SCHEMA, GROUP_VERDICT_SCHEMA, WALKTHROUGH_SCHEMA, CHECKS_SCHEMA, SEVERITIES, CATEGORIES,
+  type RawFinding,
 } from './schemas.js';
 import {
   REVIEWER_SYSTEM, VERIFIER_SYSTEM, WALKTHROUGH_SYSTEM, CHECKS_SYSTEM,
@@ -153,11 +154,28 @@ async function sampleFindings(
   return usable;
 }
 
-/** Whether a raw finding carries what `findInFile` dereferences: numeric lines and text. */
-function isUsable(f: RawFinding): boolean {
-  return Number.isFinite(f.start_line) && Number.isFinite(f.end_line)
-    && typeof f.title === 'string' && typeof f.body === 'string';
+/**
+ * Whether a raw finding carries what `findInFile` dereferences: numeric lines and
+ * text. A salvaged array can hold anything, `null` included, so the entry itself
+ * is checked before its fields.
+ */
+function isUsable(f: unknown): f is RawFinding {
+  return typeof f === 'object' && f !== null
+    && 'start_line' in f && Number.isFinite(f.start_line)
+    && 'end_line' in f && Number.isFinite(f.end_line)
+    && 'title' in f && typeof f.title === 'string'
+    && 'body' in f && typeof f.body === 'string';
 }
+
+/**
+ * The label a finding is filed under when the model gave none the schema allows.
+ * Only a reply that ignored the schema lacks them, and rejecting it for that
+ * would drop a real finding over its label. `major` rather than `critical`
+ * because an unlabelled finding should not block a merge on its own; the
+ * verifier's importance ceiling still lowers it.
+ */
+const severityOf = (s: unknown): RawFinding['severity'] => SEVERITIES.find((x) => x === s) ?? 'major';
+const categoryOf = (c: unknown): RawFinding['category'] => CATEGORIES.find((x) => x === c) ?? 'correctness';
 
 export async function findInFile(
   model: ModelClient,
@@ -203,8 +221,8 @@ export async function findInFile(
       path: unit.path,
       startLine: start,
       endLine: end,
-      severity: r.severity,
-      category: r.category,
+      severity: severityOf(r.severity),
+      category: categoryOf(r.category),
       title: r.title.trim(),
       body: r.body.trim(),
       suggestion: r.suggestion?.trim() ? r.suggestion : undefined,
