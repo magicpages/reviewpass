@@ -39,7 +39,7 @@ raised is not in it, so recall is recall against what anyone found.
 
 ## Requirements
 
-- Node 20+, and `npm ci` in this repository.
+- Node 22+, as `engines` in `package.json` requires, and `npm ci` in this repository.
 - The GitHub CLI (`gh`), authenticated for the repository under test. Setup reads
   each pull request's title, body and base from it.
 - A local clone of the repository under test.
@@ -93,7 +93,7 @@ Setup writes `cases.json` next to the spec.
 | `keyEnv` | Name of the environment variable holding the key for the methods' endpoint. Keys are never written into the config. |
 | `env` | Optional environment for reviewed runs, for example `{ "REVIEWPASS_CONCURRENCY": "2" }` for an endpoint that rate-limits bursts. |
 | `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens" }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `cases` limits a method to some case ids. |
-| `judges` | `first`, `second`, `tiebreak`: `{ "name", "endpoint", "model", "keyEnv", "price": { "input", "output" }, "maxTokens"?, "extra"? }`. `price` is per million tokens. `extra` is sent verbatim with every judge call, for example provider routing or `{ "reasoning": { "enabled": false } }`. |
+| `judges` | `first`, `second`, `tiebreak`: `{ "name", "endpoint", "model", "keyEnv", "price": { "input", "output" }, "maxTokens"?, "timeoutMs"?, "extra"? }`. `price` is per million tokens. `timeoutMs` is the deadline for one call, reply included (default ten minutes); a call that misses it is retried like a rate limit. `extra` is sent verbatim with every judge call, for example provider routing or `{ "reasoning": { "enabled": false } }`. |
 | `spendCap` | Stop judging once this much has been spent in one invocation. Uses the cost the endpoint reports when it reports one, the price table otherwise. |
 
 ## Output

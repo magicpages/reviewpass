@@ -28,6 +28,12 @@ export interface Judge {
    * attempt is paid for and thrown away each time.
    */
   maxTokens?: number;
+  /**
+   * Deadline for one call, reply body included. Default ten minutes. Node's fetch
+   * also gives up on its own after 300 seconds without response headers, so this
+   * mostly bounds a body that trickles in.
+   */
+  timeoutMs?: number;
   /** Per million tokens, in the account's currency - used to hold the spend cap. */
   price: { input: number; output: number };
 }
@@ -76,15 +82,26 @@ export async function ask<T>(
     await sleep(Math.min(60_000, 10_000 * outages));
   };
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${judge.endpoint}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${judge.key}` },
-      body: JSON.stringify({
-        model: judge.model, temperature: 0, max_tokens: (judge.maxTokens ?? 16_384) * (attempt + 1),
-        messages, response_format: format, ...judge.extra,
-      }),
-    });
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await fetch(`${judge.endpoint}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${judge.key}` },
+        body: JSON.stringify({
+          model: judge.model, temperature: 0, max_tokens: (judge.maxTokens ?? 16_384) * (attempt + 1),
+          messages, response_format: format, ...judge.extra,
+        }),
+        signal: AbortSignal.timeout(judge.timeoutMs ?? 600_000),
+      });
+      text = await res.text();
+    } catch (e) {
+      // fetch rejects only when no reply arrived: the connection failed, or the call
+      // ran past its deadline. Either is the endpoint's, not the judge's.
+      await outage(`no reply: ${String(e).slice(0, 160)}`);
+      attempt--;
+      continue;
+    }
     if (res.status === 429 || res.status >= 500) { await outage(`${res.status}: ${text.slice(0, 160)}`); attempt--; continue; }
     if (res.status === 400 && format.type === 'json_schema' && /response_format|json_schema|schema/i.test(text)) {
       // The endpoint will not enforce the schema, so show it instead.

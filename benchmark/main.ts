@@ -8,9 +8,9 @@
  * models and prices come from the run config; keys come from the environment,
  * named in the config and never written into it. Keep the config under eval/.
  */
-import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnRun } from './child.js';
 import { methodKey, type ModelSetting } from './runs.js';
 import { groupCauses, judgeCauses, assignFindings, type Judges } from './reference.js';
 import { Spend, type Judge } from './judges.js';
@@ -54,28 +54,10 @@ function key(name: string): string {
 // ------------------------------------------------------------------ runs
 
 function worker(cfg: RunConfig, c: Case, kind: string, model: ModelSetting, run: number, out: string): Promise<void> {
-  return new Promise((resolve) => {
-    const child = spawn('npx', ['tsx', 'benchmark/worker.ts', cfg.cases, c.id, kind, JSON.stringify(model), String(run), out], {
-      env: { ...process.env, ...cfg.env, REVIEWPASS_API_KEY: key(cfg.keyEnv) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    // The run's own log, beside it: a long review can be watched, a failed one read in full.
-    const log = createWriteStream(out.replace(/\.json$/, '.log'));
-    let err = '';
-    child.stdout.on('data', (d) => process.stdout.write(`  ${d}`));
-    child.stderr.on('data', (d) => { err += d; log.write(d); });
-    child.on('close', (code) => {
-      log.end();
-      // A worker that died never wrote its run. Record the failure rather than
-      // leave a gap that would read as a run with no findings.
-      if (code !== 0 && !existsSync(out)) {
-        writeJson(out, { caseId: c.id, method: methodKey(kind === 'raw' ? 'raw' : 'reviewpass', model), run,
-          findings: [], refuted: [], wallMs: 0, promptTokens: 0, completionTokens: 0,
-          error: `worker exited ${code}: ${err.trim().split('\n').slice(-3).join(' ').slice(0, 240)}` } satisfies Run);
-      }
-      resolve();
-    });
-  });
+  return spawnRun('npx', ['tsx', 'benchmark/worker.ts', cfg.cases, c.id, kind, JSON.stringify(model), String(run), out],
+    { ...process.env, ...cfg.env, REVIEWPASS_API_KEY: key(cfg.keyEnv) }, out,
+    (why) => ({ caseId: c.id, method: methodKey(kind === 'raw' ? 'raw' : 'reviewpass', model), run,
+      findings: [], refuted: [], wallMs: 0, promptTokens: 0, completionTokens: 0, error: why }));
 }
 
 async function runs(cfg: RunConfig, cases: Case[]) {

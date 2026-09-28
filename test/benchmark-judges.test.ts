@@ -110,3 +110,28 @@ test('an endpoint failure spends neither an answer attempt nor a budget step', {
     assert.deepEqual(budgets, [16_384, 16_384, 32_768, 49_152, 65_536], 'the retry after a rate limit must not raise the budget');
   });
 });
+
+test('a call that gets no reply before its deadline is waited out and retried', { timeout: 30_000 }, async () => {
+  let calls = 0;
+  const hung: import('node:http').ServerResponse[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if (calls++ === 0) { hung.push(res); return; } // never answers
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(good));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address() as { port: number };
+  const judge: Judge = { name: 'stub', endpoint: `http://127.0.0.1:${port}/v1`, model: 'm', key: 'k', timeoutMs: 200,
+    price: { input: 1, output: 1 } };
+  try {
+    assert.deepEqual(await ask(judge, 'sys', 'user', { type: 'object' }, isOk, new Spend(1)), { ok: true });
+    assert.equal(calls, 2);
+  } finally {
+    for (const r of hung) r.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
