@@ -137,7 +137,26 @@ async function sampleFindings(
   if (!Array.isArray(value?.findings)) {
     throw new Error('model reply had no findings array (recovered an object of the wrong shape)');
   }
-  return value.findings;
+  // The same false all-clear, one level down. Salvage can return an array whose
+  // entries the pipeline cannot place: without numeric lines `findInFile` reads
+  // each one as drift and drops it, and without a title or body `.trim()` throws.
+  // A reply made only of those ignored the schema - it is not a clean file.
+  const usable = value.findings.filter(isUsable);
+  if (value.findings.length && !usable.length) {
+    throw new Error(`model reply's ${value.findings.length} finding(s) had no line numbers, title or body `
+      + '(a reply that ignored the schema)');
+  }
+  if (usable.length < value.findings.length) {
+    console.error(`  ${unit.path}: dropped ${value.findings.length - usable.length} of ${value.findings.length} `
+      + 'finding(s) the model returned without line numbers, title or body');
+  }
+  return usable;
+}
+
+/** Whether a raw finding carries what `findInFile` dereferences: numeric lines and text. */
+function isUsable(f: RawFinding): boolean {
+  return Number.isFinite(f.start_line) && Number.isFinite(f.end_line)
+    && typeof f.title === 'string' && typeof f.body === 'string';
 }
 
 export async function findInFile(

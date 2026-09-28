@@ -42,6 +42,25 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** ~4 chars per token is close enough for budgeting, and needs no tokenizer. */
 export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
+
+/**
+ * The messages with the schema written into the system prompt, for an endpoint
+ * that will only promise `json_object`.
+ *
+ * `json_object` guarantees some JSON, not this JSON. With the grammar gone and
+ * nothing in its place a model answers in a shape of its own: measured on an
+ * endpoint that refuses strict mode for most of its models, four of five
+ * returned findings without `start_line` and `end_line`. The pipeline reads
+ * those as drift and drops them, so a review that found real defects reports
+ * a clean file.
+ */
+export function withSchema(messages: ChatMessage[], schema: object): ChatMessage[] {
+  const note = 'Respond with a single JSON object that matches this JSON Schema exactly, '
+    + `including every required key:\n${JSON.stringify(schema)}`;
+  const i = messages.findIndex((m) => m.role === 'system');
+  if (i === -1) return [{ role: 'system', content: note }, ...messages];
+  return messages.map((m, j) => (j === i ? { ...m, content: `${m.content}\n\n${note}` } : m));
+}
 /**
  * The transport the model request goes through, with limits that follow the
  * configuration.
@@ -280,9 +299,10 @@ export class ModelClient {
             && /response_format|json_schema|schema/i.test(text)) {
             loosenedFormat = true;
             body.response_format = { type: 'json_object' };
+            if (opts.schema) body.messages = withSchema(messages, opts.schema);
             console.error(
-              `  ${endpoint} rejected a strict json_schema response format; retrying with json_object. `
-              + 'Findings are salvaged from the reply rather than grammar-constrained.',
+              `  ${endpoint} rejected a strict json_schema response format; retrying with json_object `
+              + 'and the schema in the prompt. The reply is checked and salvaged rather than grammar-constrained.',
             );
             continue;
           }
