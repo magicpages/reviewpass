@@ -1,0 +1,10 @@
+{
+  "source": "../your-repo",
+  "repo": "your-org/your-repo",
+  "clone": "eval/bench/repo",
+  "worktrees": "eval/bench/wt",
+  "cases": [
+    { "pr": 101, "head": "0123abc" },
+    { "pr": 117, "head": "4567def" }
+  ]
+}

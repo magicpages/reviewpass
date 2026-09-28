@@ -1,0 +1,20 @@
+{
+  "cases": "eval/bench/cases.json",
+  "out": "eval/bench/out",
+  "runs": 3,
+  "parallel": 2,
+  "keyEnv": "REVIEW_API_KEY",
+  "env": { "REVIEWPASS_CONCURRENCY": "2" },
+  "methods": [
+    { "kind": "reviewpass", "model": { "endpoint": "https://api.example.com/v1", "name": "model-a", "effort": "low", "maxTokens": 32768 } },
+    { "kind": "raw", "model": { "endpoint": "https://api.example.com/v1", "name": "model-a", "effort": "low", "maxTokens": 32768 } },
+    { "kind": "reviewpass", "model": { "endpoint": "https://api.example.com/v1", "name": "model-b", "maxTokens": 16384 }, "cases": ["101"] },
+    { "kind": "raw", "model": { "endpoint": "https://api.example.com/v1", "name": "model-b", "maxTokens": 16384 }, "cases": ["101"] }
+  ],
+  "judges": {
+    "first": { "name": "judge-a", "endpoint": "https://judges.example.com/v1", "model": "vendor-x/judge-a", "keyEnv": "JUDGE_API_KEY", "price": { "input": 2, "output": 10 } },
+    "second": { "name": "judge-b", "endpoint": "https://judges.example.com/v1", "model": "vendor-y/judge-b", "keyEnv": "JUDGE_API_KEY", "price": { "input": 0.75, "output": 3.75 }, "maxTokens": 32768 },
+    "tiebreak": { "name": "judge-c", "endpoint": "https://judges.example.com/v1", "model": "vendor-z/judge-c", "keyEnv": "JUDGE_API_KEY", "price": { "input": 2, "output": 10 }, "extra": { "reasoning": { "enabled": false } } }
+  },
+  "spendCap": 10
+}

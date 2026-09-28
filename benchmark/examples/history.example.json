@@ -1,0 +1,12 @@
+[
+  {
+    "pr": 101,
+    "path": "src/retry.ts",
+    "line": 42,
+    "commit": "0123abc",
+    "title": "Back off between retries",
+    "body": "The loop retries immediately, so a failing upstream is hit as fast as the client can send.",
+    "label": "good",
+    "reason": "Fixed in 89ab012"
+  }
+]
