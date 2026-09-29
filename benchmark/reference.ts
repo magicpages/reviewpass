@@ -215,18 +215,72 @@ async function placeBatch(c: Case, path: string, fs: BenchFinding[], cs: Referen
  * The grouping is one judge's placement; a second places blind; disagreements
  * go to the tiebreak, whose answer stands.
  */
-export async function assignFindings(c: Case, findings: BenchFinding[], ref: ReferenceEntry[], j: Judges, spend: Spend) {
-  const first = new Map<string, string>();
-  for (const e of ref) for (const m of e.members) first.set(m, e.id);
+export async function assignFindings(c: Case, findings: BenchFinding[], ref: ReferenceEntry[], j: Judges, spend: Spend,
+  firstPlacement?: Map<string, string | null>) {
+  // The first placement is the grouping, unless the findings were never grouped:
+  // then it is the first judge's own blind placement.
+  const first = new Map<string, string | null>(firstPlacement ?? []);
+  if (!firstPlacement) for (const e of ref) for (const m of e.members) first.set(m, e.id);
   const final = new Map<string, string | null>();
   let disputed = 0;
   for (const [path, fs] of byPath(findings)) {
     const cs = ref.filter((e) => e.path === path);
-    const second = await place(c, path, fs, cs, j.second, spend);
+    // No causes to choose from: nothing a judge could say but "none".
+    const second = cs.length ? await place(c, path, fs, cs, j.second, spend) : new Map(fs.map((f) => [f.id, null]));
     const split = fs.filter((f) => (first.get(f.id) ?? null) !== second.get(f.id));
     disputed += split.length;
     const t = split.length ? await place(c, path, split, cs, j.tiebreak, spend) : new Map<string, string | null>();
     for (const f of fs) final.set(f.id, t.has(f.id) ? t.get(f.id)! : (first.get(f.id) ?? null));
   }
   return { final, disputed };
+}
+
+// ---------------------------------------------------------------- extend
+
+/** Findings in the pool that the reference has not placed yet: what new runs added. */
+export function unplacedFindings(pool: BenchFinding[], placed: Iterable<[string, string | null]>): BenchFinding[] {
+  const done = new Set([...placed].map(([id]) => id));
+  return pool.filter((f) => !done.has(f.id));
+}
+
+/**
+ * New causes' ids made distinct from the reference's: grouping numbers causes per
+ * file from `#0`, which the reference already uses.
+ */
+export function renumberCauses(entries: ReferenceEntry[], placed: Map<string, string | null>, tag: string) {
+  const id = (old: string) => `${old}+${tag}`;
+  return {
+    entries: entries.map((e) => ({ ...e, id: id(e.id) })),
+    placed: new Map([...placed].map(([f, cause]) => [f, cause === null ? null : id(cause)])),
+  };
+}
+
+/**
+ * Place findings from new runs into an existing reference without judging it
+ * again. Both judges place each new finding blind under the causes already
+ * there, and the tiebreak settles where they differ - the same two-judge rule
+ * the reference was built with. Findings neither can place name a cause the
+ * reference lacks: those go through grouping, rulings and assignment as new
+ * causes. `tag` keeps the new causes' ids apart from the old ones.
+ */
+export async function extendReference(c: Case, fresh: BenchFinding[], ref: ReferenceEntry[], j: Judges, spend: Spend,
+  tag: string) {
+  const firstPlacement = new Map<string, string | null>();
+  for (const [path, fs] of byPath(fresh)) {
+    const cs = ref.filter((e) => e.path === path);
+    for (const [f, cause] of (cs.length ? await place(c, path, fs, cs, j.first, spend) : new Map(fs.map((x) => [x.id, null])))) {
+      firstPlacement.set(f, cause);
+    }
+  }
+  const known = await assignFindings(c, fresh, ref, j, spend, firstPlacement);
+  const leftover = fresh.filter((f) => known.final.get(f.id) === null);
+  if (!leftover.length) return { entries: [] as ReferenceEntry[], placed: known.final, disputed: known.disputed };
+
+  const causes = await groupCauses(c, leftover, j.first, spend);
+  const entries = await judgeCauses(c, causes, new Map(leftover.map((f) => [f.id, f])), j, spend);
+  const added = await assignFindings(c, leftover, entries, j, spend);
+  const renumbered = renumberCauses(entries, added.final, tag);
+  const placed = new Map(known.final);
+  for (const [f, cause] of renumbered.placed) placed.set(f, cause);
+  return { entries: renumbered.entries, placed, disputed: known.disputed + added.disputed };
 }

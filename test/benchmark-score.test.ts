@@ -80,3 +80,11 @@ test('consistency ignores defects in cases the method never ran on', () => {
   // `elsewhere` is in case d, which method m skipped: not a defect it missed.
   assert.deepEqual(c.high, [0, 1]);
 });
+
+test('method keys stay as they were for settings without the newer fields', async () => {
+  const { methodKey } = await import('../benchmark/runs.js');
+  const m = { endpoint: 'e', name: 'model-a', effort: 'low' as const, maxTokens: 32768 };
+  assert.equal(methodKey('reviewpass', m), 'reviewpass@model-a@low@32768');
+  assert.equal(methodKey('raw', { ...m, effort: undefined }), 'raw@model-a@default@32768');
+  assert.equal(methodKey('reviewpass', { ...m, verifyName: 'model-b', label: 'meta' }), 'reviewpass@model-a@low@32768+verify=model-b#meta');
+});

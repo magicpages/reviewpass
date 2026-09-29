@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRun } from './child.js';
 import { methodKey, type ModelSetting } from './runs.js';
-import { groupCauses, judgeCauses, assignFindings, type Judges } from './reference.js';
+import { groupCauses, judgeCauses, assignFindings, extendReference, unplacedFindings, type Judges } from './reference.js';
 import { Spend, type Judge } from './judges.js';
 import { scoreCase, consistency, type MethodScore } from './score.js';
 import type { BenchFinding, Case, ReferenceEntry, Run } from './types.js';
@@ -90,7 +90,14 @@ function loadRuns(cfg: RunConfig, caseId: string): Run[] {
 
 const judge = (j: JudgeConfig): Judge => ({ ...j, key: key(j.keyEnv) });
 
-interface CaseReference { entries: ReferenceEntry[]; placed: [string, string | null][]; disputed: number; spent: number }
+interface CaseReference {
+  entries: ReferenceEntry[];
+  placed: [string, string | null][];
+  disputed: number;
+  spent: number;
+  /** How many times new runs were placed into it after it was built. */
+  extensions?: number;
+}
 
 async function reference(cfg: RunConfig, cases: Case[]) {
   const dir = join(cfg.out, 'reference');
@@ -101,7 +108,6 @@ async function reference(cfg: RunConfig, cases: Case[]) {
   process.env.BENCH_JUDGE_CACHE = join(cfg.out, 'judge-cache');
   for (const c of cases) {
     const out = join(dir, `${c.id}.json`);
-    if (existsSync(out)) continue;
     const rs = loadRuns(cfg, c.id);
     // A degraded run's findings are not what the method produces, and a reference
     // built from them goes stale the moment the run is redone.
@@ -116,6 +122,22 @@ async function reference(cfg: RunConfig, cases: Case[]) {
     }));
     const pool = [...rs.flatMap((r) => [...r.findings, ...r.refuted]), ...history];
     const before = spend.spent;
+    if (existsSync(out)) {
+      // Built already. Runs added since then are placed into it rather than
+      // judging the whole case again.
+      const ref = readJson<CaseReference>(out);
+      const fresh = unplacedFindings(pool, ref.placed);
+      if (!fresh.length) continue;
+      const n = (ref.extensions ?? 0) + 1;
+      const ext = await extendReference(c, fresh, ref.entries, j, spend, `x${n}`);
+      writeJson(out, {
+        entries: [...ref.entries, ...ext.entries], placed: [...ref.placed, ...ext.placed],
+        disputed: ref.disputed + ext.disputed, spent: ref.spent + spend.spent - before, extensions: n,
+      } satisfies CaseReference);
+      console.log(`reference ${c.id}: placed ${fresh.length} new findings, ${ext.entries.length} new causes `
+        + `(${ext.entries.filter((e) => e.defect).length} defects), spent ${(spend.spent - before).toFixed(2)}`);
+      continue;
+    }
     // Each stage is kept as it completes: a later stage failing must not make the
     // earlier, paid-for ones run again.
     const stage = async <T>(name: string, run: () => Promise<T>): Promise<T> => {

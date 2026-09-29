@@ -24,10 +24,16 @@ export interface ModelSetting {
   effort?: Effort;
   /** Initial find budget; reviewpass escalates it on a length failure. */
   maxTokens: number;
+  /** A different model for verification; the find model verifies when unset. */
+  verifyName?: string;
+  /** Tells apart two runs of otherwise identical settings, e.g. before and after a change. */
+  label?: string;
 }
 
+/** Unchanged for settings without the newer fields, so earlier runs are still found. */
 export const methodKey = (kind: 'reviewpass' | 'raw', m: ModelSetting) =>
-  `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`;
+  `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`
+  + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.label ? `#${m.label}` : '');
 
 /**
  * A local range carries no statement of intent: LocalSource falls back to the
@@ -89,7 +95,7 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       source: new CaseSource(c), token: '', owner: 'bench', repo: c.id, prNumber: Number(c.id),
       workspace: c.workspace, fullReview: true, dryRun: true, store,
       configOverrides: {
-        endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.name,
+        endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
         reasoningEffort: m.effort, maxTokens: m.maxTokens,
       },
       log: {

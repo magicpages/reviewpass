@@ -64,6 +64,10 @@ npm run benchmark -- eval/bench/run-config.json      # runs, reference, report
 benchmark resumes where it stopped:
 
 - A finished run is not repeated. A failed or degraded run is.
+- A method added after the reference was built does not rebuild it. Its findings
+  are placed blind by both judges under the causes already judged, with the
+  tiebreak settling differences; only findings neither can place become new
+  causes and are ruled on.
 - Every accepted judge reply is cached under a hash of the model, the prompts and
   the schema. A rerun pays only for calls it has not made.
 
@@ -92,7 +96,7 @@ Setup writes `cases.json` next to the spec.
 | `parallel` | Runs in flight at once. Each is its own process. |
 | `keyEnv` | Name of the environment variable holding the key for the methods' endpoint. Keys are never written into the config. |
 | `env` | Optional environment for reviewed runs, for example `{ "REVIEWPASS_CONCURRENCY": "2" }` for an endpoint that rate-limits bursts. |
-| `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens" }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `cases` limits a method to some case ids. |
+| `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens", "verifyName"?, "label"? }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `verifyName` verifies with a different model than the one that finds. `label` tells apart two runs of otherwise identical settings. `cases` limits a method to some case ids. |
 | `judges` | `first`, `second`, `tiebreak`: `{ "name", "endpoint", "model", "keyEnv", "price": { "input", "output" }, "maxTokens"?, "timeoutMs"?, "extra"? }`. `price` is per million tokens. `timeoutMs` is the deadline for one call, reply included (default ten minutes); a call that misses it is retried like a rate limit. `extra` is sent verbatim with every judge call, for example provider routing or `{ "reasoning": { "enabled": false } }`. |
 | `spendCap` | Stop judging once this much has been spent in one invocation. Uses the cost the endpoint reports when it reports one, the price table otherwise. |
 
@@ -101,7 +105,10 @@ Setup writes `cases.json` next to the spec.
 Under `out`:
 
 - `runs/<case>__<method>__<n>.json` and `.log`: each run's findings, what
-  verification refuted, wall time, tokens and errors, plus its log.
+  verification refuted, wall time, tokens and errors, plus its log. A
+  reviewpass finding carries `meta`: severity, category, importance, verify's
+  confidence and reason, and which find samples raised it - for scoring filters
+  afterwards. Judges never see it.
 - `reference/<case>.json`: the causes, every judge's verdict, and where each
   finding was placed. Partial stages are kept as `<case>.causes.json` and
   `<case>.entries.json`.
