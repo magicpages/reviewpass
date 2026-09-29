@@ -59,8 +59,13 @@ export REVIEW_API_KEY=...  JUDGE_API_KEY=...         # the variables your config
 npm run benchmark -- eval/bench/run-config.json      # runs, reference, report
 ```
 
-`benchmark` takes an optional stage after the config: `runs`, `reference` or
-`report` (default `all`). Every stage skips work already done, so an interrupted
+`benchmark` takes an optional stage after the config: `runs`, `reference`,
+`report` or `filters` (default `all`). `filters` re-scores the runs of every
+method that records `meta` as if it had dropped findings by a rule before
+posting (agreement between samples, severity, category, importance,
+confidence), and writes `filters.md`: the real defects each rule costs against
+the noise it removes. It reads the runs and the reference only, so it costs
+nothing to run. Every stage skips work already done, so an interrupted
 benchmark resumes where it stopped:
 
 - A finished run is not repeated. A failed or degraded run is.

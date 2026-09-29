@@ -88,3 +88,21 @@ test('method keys stay as they were for settings without the newer fields', asyn
   assert.equal(methodKey('raw', { ...m, effort: undefined }), 'raw@model-a@default@32768');
   assert.equal(methodKey('reviewpass', { ...m, verifyName: 'model-b', label: 'meta' }), 'reviewpass@model-a@low@32768+verify=model-b#meta');
 });
+
+test('a filter is scored as if the method had applied it before posting', async () => {
+  const { scoreFilters, STANDARD_FILTERS } = await import('../benchmark/score.js');
+  const withMeta = (id: string, samples: number[], severity = 'minor'): BenchFinding => ({ ...f(id), meta: { samples, severity } });
+  const runs: Run[] = [{
+    caseId: 'c', method: 'm', run: 1, refuted: [], wallMs: 0, promptTokens: 0, completionTokens: 0,
+    findings: [withMeta('agreed', [0, 2]), withMeta('lone', [1]), withMeta('loneNoise', [3]), withMeta('loneMajor', [1], 'major')],
+  }, { ...run(1, ['x'], [], 'no-meta') }];
+  const placed = new Map([['agreed', 'bug'], ['lone', 'bug2'], ['loneNoise', 'noise'], ['loneMajor', 'noise'], ['x', 'bug']]);
+  const scores = scoreFilters(ref, placed, runs, STANDARD_FILTERS);
+  const by = (name: string) => scores.find((s) => s.filter === name)!;
+  assert.ok(scores.every((s) => s.method === 'm'), 'a method without meta cannot be filtered, so it is not scored');
+  assert.deepEqual([by('as posted').hits, by('as posted').falseFindings], [2, 2]);
+  // Requiring agreement drops the lone real defect and both lone noise findings.
+  assert.deepEqual([by('raised by 2+ samples').hits, by('raised by 2+ samples').falseFindings], [1, 0]);
+  // Letting major findings through regardless keeps the lone major noise.
+  assert.deepEqual([by('2+ samples, or major and up').hits, by('2+ samples, or major and up').falseFindings], [1, 1]);
+});
