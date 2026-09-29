@@ -356,14 +356,26 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       findings: [], walkthrough: 'No reviewable changes in this update.', fileGroups: [],
       effort: { score: 1, label: 'Trivial' }, mergeRisk: 'minimal', checks: [],
       event: decideEvent([], cfg, false, prior.openFindings), skipped,
+      // An update with nothing reviewable must not erase what is still open.
+      openFindings: prior.openFindings,
     };
     const plan: ReviewPlan = { anchored: [], unanchored: [] };
+    const stillOpen = prior.openFindings
+      ? ` ${prior.openFindings} earlier finding${prior.openFindings === 1 ? '' : 's'} still open above.`
+      : '';
     if (!opts.dryRun) {
       if (empty.event !== 'REQUEST_CHANGES') {
         await gh.dismissStaleReviews(
           prNumber, 'Superseded: no reviewable changes remain in this update.');
       }
-      await gh.submitReview(prNumber, pr.headSha, plan, empty.walkthrough, empty.event);
+      await gh.submitReview(prNumber, pr.headSha, plan, `${empty.walkthrough}${stillOpen}`, empty.event);
+      // The note posted at the start says only that nothing here is reviewable.
+      // With findings still open, the walkthrough has to say so, or they vanish
+      // from the comment people read.
+      if (prior.openFindings && cfg.review.postWalkthrough) {
+        await gh.upsertWalkthrough(prNumber, renderWalkthrough(pr, empty), walkthroughId)
+          .catch((err) => log.warn(`could not update the walkthrough: ${String(err).slice(0, 120)}`));
+      }
     }
     return {
       pr, result: empty, plan, walkthrough: renderWalkthrough(pr, empty),
@@ -672,8 +684,8 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   // Anchor first: the summary has to report whatever could not be posted inline.
   const diffLines = new Map(selected.map((f) => [f.path, new Set(f.addedLines)]));
   const plan = gh.planComments(findings, diffLines);
-  const summary = renderReviewSummary(result, plan.unanchored);
-  const walkthrough = renderWalkthrough(pr, result);
+  let summary = renderReviewSummary(result, plan.unanchored);
+  let walkthrough = renderWalkthrough(pr, result);
 
   let posted = 0;
   let resolved = 0;
@@ -683,6 +695,17 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     // them. We cannot re-anchor safely - the code they describe may have
     // changed - but we can make sure nothing is invisible: say so at the top,
     // and repeat every finding in the review body where it cannot be hidden.
+    // Threads whose findings this review no longer raises are resolved first, so
+    // what is posted counts only what is still open - not what was open before.
+    const stillOpen = new Set(findings.map((f) => f.fingerprint!));
+    const gone = new Set([...prior.fingerprints].filter((fp) => !stillOpen.has(fp)));
+    resolved = await gh.resolveThreads(prNumber, gone).catch(() => 0);
+    if (resolved && prior.openFindings) {
+      result.openFindings = Math.max(0, prior.openFindings - resolved);
+      summary = renderReviewSummary(result, plan.unanchored);
+      walkthrough = renderWalkthrough(pr, result);
+    }
+
     const headNow = await gh.currentHeadSha(prNumber);
     const stale = headNow !== null && headNow !== pr.headSha;
     if (stale) {
@@ -726,9 +749,6 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
         walkthroughId,
       );
     }
-    const stillOpen = new Set(findings.map((f) => f.fingerprint!));
-    const gone = new Set([...prior.fingerprints].filter((fp) => !stillOpen.has(fp)));
-    resolved = await gh.resolveThreads(prNumber, gone).catch(() => 0);
   }
 
   for (const f of [...findings, ...refuted]) {

@@ -54,22 +54,52 @@ export function renderCheckVerdict(r: ReviewResult): {
         };
   }
   const n = r.findings.length;
+  const found = `${n} finding${n === 1 ? '' : 's'}`;
   return {
     conclusion: 'success',
-    title: n === 0 ? 'Nothing to raise' : `${n} finding${n === 1 ? '' : 's'}`,
+    // Some files failed: whatever the rest held, this is not a clean review.
+    title: failed > 0 ? (n === 0 ? 'Incomplete review' : `${found}, ${failed} file(s) not reviewed`)
+      : n === 0 ? 'Nothing to raise' : found,
     summary: counted,
   };
+}
+
+/** The part of a review that did not happen, e.g. "2 of 5 file(s) failed". */
+function failedOf(r: ReviewResult): string {
+  const failed = r.failedFiles ?? 0;
+  return `${failed} of ${failed + (r.reviewedFiles ?? 0)} file(s) failed`;
+}
+
+/**
+ * The walkthrough's first line, which is what a reader takes as the verdict.
+ *
+ * It follows the review body's rules, because it is the same claim in a more
+ * visible place: "Nothing to raise" is true only when the code was read. The
+ * walkthrough used to count findings alone, so a run whose only file failed
+ * rewrote a pull request's summary to "Nothing to raise" while its check went
+ * red - and an incremental run with nothing new erased the count of findings
+ * still open from the round before.
+ */
+function walkthroughHeadline(r: ReviewResult): string {
+  const n = r.findings.length;
+  const failed = (r.failedFiles ?? 0) > 0;
+  if (n > 0) return `**${n} finding${n === 1 ? '' : 's'}.**${failed ? ` ${failedOf(r)} and were not reviewed.` : ''}`;
+  if (r.blocked) return `**Nothing was reviewed.** ${r.blocked.message}`;
+  if (failed) return `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`;
+  if (r.openFindings) {
+    // "No new findings" rather than "nothing new in these commits": a full review
+    // can end here too.
+    return `**No new findings.** ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open.`;
+  }
+  return '**Nothing to raise.**';
 }
 
 /** The standalone walkthrough comment, updated in place across runs. */
 export function renderWalkthrough(pr: PullRequestContext, r: ReviewResult): string {
   const out: string[] = [WALKTHROUGH_MARKER, `<!-- reviewpass:sha:${pr.headSha} -->`, ''];
 
-  const actionable = r.findings.length;
   out.push(
-    actionable === 0
-      ? '**Nothing to raise.**'
-      : `**${actionable} finding${actionable === 1 ? '' : 's'}.**`,
+    walkthroughHeadline(r),
     '',
     r.walkthrough,
     '',
@@ -144,9 +174,9 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       r.blocked
         ? `_${r.blocked.message} This says nothing about the change._`
         : r.failedFiles && r.failedFiles > 0
-          ? `**Incomplete review.** ${r.failedFiles} of ${r.failedFiles + (r.reviewedFiles ?? 0)} file(s) failed; nothing was raised in the rest.`
+          ? `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`
           : r.openFindings
-            ? `Nothing new in these commits. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
+            ? `No new findings. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
             : 'Nothing to raise.',
     );
   } else {
@@ -157,6 +187,9 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       .map((s) => `${SEVERITY_LABEL[s]} ${bySeverity.get(s)}`)
       .join(' · ');
     out.push(`**${r.findings.length} finding${r.findings.length === 1 ? '' : 's'}** — ${tally}`);
+    if (r.failedFiles && r.failedFiles > 0) {
+      out.push('', `_${failedOf(r)} and were not reviewed, so these findings do not cover the whole change._`);
+    }
 
     // Verification fails open: a finding whose verify call could not run is
     // upheld rather than dropped, so a verifier outage produces a review that
