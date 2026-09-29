@@ -162,6 +162,14 @@ export class GitHubClient {
    * @param atSha Review the PR as it stood at this commit instead of at its head.
    *   Used to replay a historical review against known outcomes.
    */
+  /** Every commit on the pull request, oldest first. */
+  async pullRequestCommits(number: number): Promise<string[]> {
+    const commits = await this.kit.paginate(this.kit.rest.pulls.listCommits, {
+      owner: this.owner, repo: this.repo, pull_number: number, per_page: 100,
+    });
+    return commits.map((c) => c.sha);
+  }
+
   async loadPullRequest(number: number, incremental: boolean, atSha?: string): Promise<PullRequestContext> {
     const { data: pr } = await this.kit.rest.pulls.get({
       owner: this.owner, repo: this.repo, pull_number: number,
