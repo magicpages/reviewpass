@@ -25,13 +25,14 @@ export function spawnRun(command: string, args: string[], env: NodeJS.ProcessEnv
     // Emitted instead of a start when the command cannot run at all; `close` follows.
     child.on('error', (e) => { spawnError = e.message; });
     child.on('close', (code) => {
-      log.end();
       if (code !== 0 && !existsSync(out)) {
         const why = spawnError ? `could not start ${command}: ${spawnError}`
           : `worker exited ${code}: ${err.trim().split('\n').slice(-3).join(' ').slice(0, 240)}`;
         writeFileSync(out, `${JSON.stringify(failed(why), null, 2)}\n`);
       }
-      resolve();
+      // Resolved once the log is on disk, not when it was asked to close: a caller
+      // reading the log straight after would otherwise find it cut short.
+      log.end(() => resolve());
     });
   });
 }

@@ -1,5 +1,5 @@
 import type { Finding, PullRequestContext, ReviewResult } from '../types.js';
-import { WALKTHROUGH_MARKER } from '../github/client.js';
+import { FINDING_MARKER, WALKTHROUGH_MARKER } from '../github/client.js';
 
 /**
  * Presentation.
@@ -59,10 +59,13 @@ export function renderCheckVerdict(r: ReviewResult): {
     conclusion: 'success',
     // Some files failed: whatever the rest held, this is not a clean review.
     title: failed > 0 ? (n === 0 ? 'Incomplete review' : `${found}, ${failed} file(s) not reviewed`)
-      : n === 0 ? 'Nothing to raise' : found,
+      : n === 0 ? (listedCount(r) ? smallerPoints(listedCount(r)) : 'Nothing to raise') : found,
     summary: counted,
   };
 }
+
+const listedCount = (r: ReviewResult) => r.listed?.length ?? 0;
+const smallerPoints = (n: number) => `${n} smaller point${n === 1 ? '' : 's'}`;
 
 /** The part of a review that did not happen, e.g. "2 of 5 file(s) failed". */
 function failedOf(r: ReviewResult): string {
@@ -83,9 +86,15 @@ function failedOf(r: ReviewResult): string {
 function walkthroughHeadline(r: ReviewResult): string {
   const n = r.findings.length;
   const failed = (r.failedFiles ?? 0) > 0;
-  if (n > 0) return `**${n} finding${n === 1 ? '' : 's'}.**${failed ? ` ${failedOf(r)} and were not reviewed.` : ''}`;
+  const listed = listedCount(r) ? ` ${smallerPoints(listedCount(r))} listed in the review.` : '';
+  if (n > 0) return `**${n} finding${n === 1 ? '' : 's'}.**${failed ? ` ${failedOf(r)} and were not reviewed.` : ''}${listed}`;
   if (r.blocked) return `**Nothing was reviewed.** ${r.blocked.message}`;
-  if (failed) return `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`;
+  if (failed) {
+    return listed
+      ? `**Incomplete review.** ${failedOf(r)}; nothing in the rest needs a comment.${listed}`
+      : `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`;
+  }
+  if (listedCount(r)) return `**Nothing that needs a comment.**${listed}`;
   if (r.openFindings) {
     // "No new findings" rather than "nothing new in these commits": a full review
     // can end here too.
@@ -174,10 +183,14 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       r.blocked
         ? `_${r.blocked.message} This says nothing about the change._`
         : r.failedFiles && r.failedFiles > 0
-          ? `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`
-          : r.openFindings
-            ? `No new findings. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
-            : 'Nothing to raise.',
+          ? `**Incomplete review.** ${failedOf(r)}; ${listedCount(r)
+            ? `nothing in the rest needs a comment - ${smallerPoints(listedCount(r))} below.`
+            : 'nothing was raised in the rest.'}`
+          : listedCount(r)
+            ? `Nothing that needs a comment; ${smallerPoints(listedCount(r))} below.`
+            : r.openFindings
+              ? `No new findings. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
+              : 'Nothing to raise.',
     );
   } else {
     const bySeverity = new Map<string, number>();
@@ -213,7 +226,7 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       `**${unanchored.length} finding${unanchored.length === 1 ? '' : 's'} outside the diff**`,
       '',
       ...unanchored.flatMap((f) => [
-        `**\`${f.path}\`:${f.startLine}** — ${f.title} <sub>(${SEVERITY_LABEL[f.severity]})</sub>`,
+        `**\`${f.path}\`:${f.startLine}** — ${f.title} <sub>(${SEVERITY_LABEL[f.severity]})</sub>${marker(f)}`,
         '',
         f.body,
         '',
@@ -221,8 +234,26 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
     );
   }
 
+  // Worth knowing, not worth a thread each. Every entry carries its marker, so a
+  // later round recognises it instead of raising it as new.
+  const listed = r.listed ?? [];
+  if (listed.length) {
+    out.push(
+      '',
+      '<details>',
+      `<summary>${smallerPoints(listed.length)}</summary>`,
+      '',
+      ...listed.map((f) =>
+        `- **\`${f.path}\`:${f.startLine}** — ${f.title} <sub>(${SEVERITY_LABEL[f.severity]} · ${f.category})</sub>${marker(f)}`),
+      '',
+      '</details>',
+    );
+  }
+
   return out.join('\n');
 }
+
+const marker = (f: Finding) => (f.fingerprint ? ` ${FINDING_MARKER(f.fingerprint)}` : '');
 
 function escapeCell(s: string): string {
   return s.replace(/\|/g, '\\|').replace(/\n+/g, ' ').trim();

@@ -13,6 +13,13 @@ model:
   # is worse than none: it rejects real defects and waves through invented ones.
   name: deepseek/deepseek-v4-flash
   verifyModel: openai/gpt-5.6-luna
+  # How hard the model may think, sent as `reasoning_effort`: none, low, medium,
+  # high or xhigh. Unset, the endpoint's default applies - which for some models
+  # is thinking until the budget runs out.
+  # reasoningEffort: low
+  # The verify pass's own effort, for a verifier from another model family than
+  # the finder. Unset, it uses reasoningEffort.
+  # verifyReasoningEffort: none
 
   temperature: 0.1
 
@@ -73,6 +80,27 @@ review:
   # the third looks across files; the fourth looks for what the code does *not*
   # do, which is the failure a diff cannot show you. Drop to 2 for speed.
   findSamples: 4
+
+  # What is posted inline and what is listed. A first review posts at most
+  # maxInline findings as comments, in ranked order; the rest are listed in a
+  # collapsed section of the review body - visible, not a thread each. Critical
+  # findings are always inline.
+  maxInline: 15
+  dropTrivial: true
+  # Maintainability findings by the verifier's importance: inline at 5 and up,
+  # listed at 4, dropped below. Measured with `benchmark/` on four pull requests,
+  # every finding judged blind: maintainability was 84 of 124 false positives,
+  # and 3 of its 87 findings named a real defect; rated 5 and up they were stale
+  # comments and missing tests the change made necessary, 2-3 were taste. Your
+  # repository may differ - `npm run benchmark` measures it.
+  maintainabilityInlineAt: 5
+  maintainabilityListAt: 4
+  # A follow-up round - new commits on a pull request already reviewed - posts
+  # inline only what is at least this severe or rated this important, and at
+  # most this many. A colleague re-checking raises what matters.
+  followUpMaxInline: 3
+  followUpMinSeverity: major
+  followUpMinImportance: 7
 
   incremental: true
   verify: true

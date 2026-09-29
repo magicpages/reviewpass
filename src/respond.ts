@@ -43,6 +43,41 @@ export interface RespondOutcome {
   threads: { path: string; outcome: 'fixed' | 'concede' | 'hold'; reply: string }[];
 }
 
+/**
+ * What each outcome does to the thread.
+ *
+ * A fix is resolved without a word. Replying "Confirmed" to every "fixed in
+ * abc123" was half of what this pass posted on one pull request - chatter that
+ * told the author nothing they had not just said. A concession resolves the
+ * thread and is remembered, so the finding is not raised again; a hold keeps
+ * it open and says why.
+ */
+export function actionFor(outcome: 'fixed' | 'concede' | 'hold'): { reply: boolean; resolve: boolean; remember: boolean } {
+  return { reply: outcome !== 'fixed', resolve: outcome !== 'hold', remember: outcome === 'concede' };
+}
+
+/**
+ * Commit ids a reply names, e.g. "fixed in 0d73304". A run of hex inside a longer
+ * token is not one: part of a UUID (`123e4567-e89b-...`) or a colour
+ * (`#e5dcf9ff`) would otherwise read as a commit never pushed, and the thread
+ * would be skipped for good.
+ */
+export function citedCommits(text: string): string[] {
+  return [...new Set(text.match(/(?<![#\w-])[0-9a-f]{7,40}(?![\w-])/g) ?? [])]
+    .filter((h) => /[a-f]/.test(h) && /\d/.test(h));
+}
+
+/**
+ * The cited commits that are not on the pull request yet. Asked of the pull
+ * request rather than the checkout, because CI checks out one commit deep: an
+ * earlier fix commit is on the branch but not in the clone. Without the list
+ * nothing is skipped - the thread is answered as it was before.
+ */
+export function unseenCommits(cited: string[], onPullRequest: string[] | undefined): string[] {
+  if (!onPullRequest) return [];
+  return cited.filter((c) => !onPullRequest.some((sha) => sha.startsWith(c)));
+}
+
 export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> {
   const log = opts.log ?? ((m: string) => console.error(m));
   const cfg = loadConfig(opts.workspace);
@@ -99,7 +134,17 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
 
   const out: RespondOutcome = { answered: 0, fixed: 0, conceded: 0, held: 0, threads: [] };
 
+  const onPullRequest = await gh.pullRequestCommits(opts.prNumber).catch(() => undefined);
   for (const r of open) {
+    // "Fixed in 0d73304" before 0d73304 is pushed: judged now, the reply meets the
+    // old code and holds, correctly and uselessly - a public "it is still there"
+    // to someone who has already fixed it. The thread stays open instead, until
+    // the next reply in it or until someone resolves it.
+    const unseen = unseenCommits(citedCommits(r.replies.map((c) => c.body).join('\n')), onPullRequest);
+    if (unseen.length) {
+      log(`  skipped  ${r.path}: the reply cites ${unseen.join(', ')}, which is not on the pull request yet`);
+      continue;
+    }
     try {
       const fileText = await readFile(join(opts.workspace, r.path), 'utf8').catch(() => undefined);
       const named = await filesNamedIn(
@@ -131,7 +176,8 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
 
       if (opts.dryRun) continue;
 
-      await gh.replyInThread(opts.prNumber, r.rootCommentId, decision.reply);
+      const action = actionFor(decision.outcome);
+      if (action.reply) await gh.replyInThread(opts.prNumber, r.rootCommentId, decision.reply);
 
       // Both a fix and a concession close the thread; only one of them means
       // the finding was wrong.
@@ -141,11 +187,11 @@ export async function runRespond(opts: RespondOptions): Promise<RespondOutcome> 
       // precisely because it worked — so "fixed in abc123" resolves the thread
       // and teaches nothing, while "this is wrong because…" resolves it and is
       // remembered.
-      if (decision.outcome !== 'hold') {
+      if (action.resolve) {
         await gh.resolveThreadById(r.threadId).catch((err) =>
           log(`  could not resolve the thread: ${String(err).slice(0, 120)}`));
       }
-      if (decision.outcome === 'concede') await recordRejection(opts, r);
+      if (action.remember) await recordRejection(opts, r);
     } catch (err) {
       // One thread failing must not cost the others. A reply that cannot be
       // written is a thread left open, which is where it started.

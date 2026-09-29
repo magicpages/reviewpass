@@ -25,6 +25,7 @@ const LEGACY_WALKTHROUGH_MARKER = '<!-- warren:walkthrough -->';
 export const isWalkthroughComment = (body: string): boolean =>
   body.includes(WALKTHROUGH_MARKER) || body.includes(LEGACY_WALKTHROUGH_MARKER);
 const FINDING_RE = /<!-- (?:reviewpass|warren):finding:([a-f0-9]+) -->/;
+const FINDING_RE_ALL = new RegExp(FINDING_RE.source, 'g');
 
 /**
  * Whether this event's own workflow check already sits on the pull request.
@@ -161,6 +162,14 @@ export class GitHubClient {
    * @param atSha Review the PR as it stood at this commit instead of at its head.
    *   Used to replay a historical review against known outcomes.
    */
+  /** Every commit on the pull request, oldest first. */
+  async pullRequestCommits(number: number): Promise<string[]> {
+    const commits = await this.kit.paginate(this.kit.rest.pulls.listCommits, {
+      owner: this.owner, repo: this.repo, pull_number: number, per_page: 100,
+    });
+    return commits.map((c) => c.sha);
+  }
+
   async loadPullRequest(number: number, incremental: boolean, atSha?: string): Promise<PullRequestContext> {
     const { data: pr } = await this.kit.rest.pulls.get({
       owner: this.owner, repo: this.repo, pull_number: number,
@@ -334,6 +343,18 @@ export class GitHubClient {
     for (const c of comments) {
       const m = FINDING_RE.exec(c.body ?? '');
       if (m) fingerprints.add(m[1]!);
+    }
+    // Findings listed in a review's body - smaller points, and those outside the
+    // diff - carry markers too. Without reading them, the next round raises each
+    // one again as new.
+    const reviews = await this.kit.paginate(this.kit.rest.pulls.listReviews, {
+      owner: this.owner, repo: this.repo, pull_number: number, per_page: 100,
+    });
+    for (const r of reviews) {
+      for (const m of (r.body ?? '').matchAll(FINDING_RE_ALL)) {
+        const fp = m[1];
+        if (fp) fingerprints.add(fp);
+      }
     }
 
     const issueComments = await this.kit.paginate(this.kit.rest.issues.listComments, {
