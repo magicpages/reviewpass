@@ -464,8 +464,12 @@ export function collapseNearDuplicates(findings: Finding[]): Finding[] {
    * continue", "log and count the skipped", "distinguish a failed upsert" —
    * all reached the author as separate comments.
    */
+  // British -ise spellings folded into -ize first, so "normalise" and "normalize",
+  // "tokenising" and "tokenizing" are one word: two samples phrasing one defect
+  // in the two spellings were posted side by side on one line.
   const stem = (w: string) =>
-    w.replace(/(ingly|edly|ing|ed|es|s)$/, '').replace(/(.)\1$/, '$1');
+    w.replace(/is(e|es|ed|ing|ation|ations)$/, 'iz$1')
+      .replace(/(ingly|edly|ing|ed|es|s)$/, '').replace(/(.)\1$/, '$1');
 
   const words = (s: string) => new Set(
     s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
