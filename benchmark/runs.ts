@@ -45,8 +45,13 @@ class CaseSource extends LocalSource {
 }
 
 const bench = (caseId: string, method: string, run: number) =>
-  (f: { path: string; startLine: number; endLine: number; title: string; body: string }, i: number): BenchFinding =>
-    ({ id: `${caseId}/${method}/${run}/${i}`, path: f.path, startLine: f.startLine, endLine: f.endLine, title: f.title, body: f.body });
+  (f: { path: string; startLine: number; endLine: number; title: string; body: string } & Partial<Finding>, i: number): BenchFinding => ({
+    id: `${caseId}/${method}/${run}/${i}`, path: f.path, startLine: f.startLine, endLine: f.endLine, title: f.title, body: f.body,
+    meta: {
+      severity: f.severity, category: f.category, importance: f.importance, confidence: f.confidence,
+      verdictReason: f.verdictReason, samples: f.samples,
+    },
+  });
 
 /**
  * reviewpass as it runs in CI, against a frozen checkout.

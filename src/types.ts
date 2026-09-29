@@ -35,6 +35,12 @@ export interface Finding {
   siblings?: Site[];
   /** Stable identity, so an incremental review does not repeat itself. */
   fingerprint?: string;
+  /**
+   * Which of the find samples raised this finding (0-based), duplicates merged.
+   * A defect several independent samples find is less likely to be noise than
+   * one a single sample produced.
+   */
+  samples?: number[];
   /** Populated by the verification pass. */
   verdict?: 'upheld' | 'refuted';
   /** The line the finding quotes as proof, checked against the workspace. */

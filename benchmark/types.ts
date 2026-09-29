@@ -49,6 +49,22 @@ export interface BenchFinding {
   endLine: number;
   title: string;
   body: string;
+  /**
+   * What the method knew about the finding, for scoring filters afterwards.
+   * Never shown to a judge: judging stays blind to severity, confidence and
+   * how many samples agreed.
+   */
+  meta?: FindingMeta;
+}
+
+export interface FindingMeta {
+  severity?: string;
+  category?: string;
+  importance?: number;
+  confidence?: number;
+  verdictReason?: string;
+  /** Which find samples raised it (reviewpass only). */
+  samples?: number[];
 }
 
 /** One run of one method on one case. */

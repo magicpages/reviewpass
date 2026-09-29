@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { batches, label, PLACE_BATCH } from '../benchmark/reference.js';
+import { batches, findingText, label, PLACE_BATCH } from '../benchmark/reference.js';
 
 test('the label is read from the start of an echoed line', () => {
   assert.equal(label('C1: The retry loop never backs off, so a failing upstream is hammered.'), 'C1');
@@ -34,4 +34,12 @@ test('placement batches cover every finding once, in order, none over the limit'
   assert.deepEqual(bs.flat(), xs);
   assert.deepEqual(batches([1, 2], PLACE_BATCH), [[1, 2]], 'a small file is one call, the same prompt as before');
   assert.deepEqual(batches([], PLACE_BATCH), []);
+});
+
+test('a judge never sees what the method knew about a finding', () => {
+  const text = findingText('F1', {
+    id: 'c/m/1/0', path: 'a.ts', startLine: 3, endLine: 4, title: 'Guard the empty list', body: 'items may be empty.',
+    meta: { severity: 'critical', category: 'security', importance: 9, confidence: 0.97, verdictReason: 'upheld: SECRET', samples: [0, 1, 2] },
+  });
+  assert.equal(text, 'F1 (lines 3-4): Guard the empty list\nitems may be empty.');
 });

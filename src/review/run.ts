@@ -184,13 +184,14 @@ export async function findInFile(
   unit: ReviewUnit,
 ): Promise<Finding[]> {
   const samples = Math.max(1, cfg.review.findSamples);
-  const raw: RawFinding[] = [];
+  const raw: { r: RawFinding; sample: number }[] = [];
   for (let i = 0; i < samples; i++) {
     // Vary the temperature across samples so they explore differently; the
     // first stays cold so the most obvious defects are always reported.
     const temperature = i === 0 ? cfg.model.temperature : Math.min(0.8, cfg.model.temperature + 0.25 * i);
     try {
-      raw.push(...await sampleFindings(model, cfg, pr, unit, temperature, PASS_FOCUS[i] ?? ''));
+      raw.push(...(await sampleFindings(model, cfg, pr, unit, temperature, PASS_FOCUS[i] ?? ''))
+        .map((r) => ({ r, sample: i })));
     } catch (err) {
       if (i === 0) throw err;   // a first-sample failure is a real failure
       break;                     // a later one just means fewer samples
@@ -199,9 +200,9 @@ export async function findInFile(
 
   const changed = new Set(unit.file.addedLines);
   const out: Finding[] = [];
-  const seen = new Set<string>();
+  const byFingerprint = new Map<string, Finding>();
 
-  for (const r of raw) {
+  for (const { r, sample } of raw) {
     // The model occasionally anchors to context rather than the change. Findings
     // that touch no changed line cannot be posted inline and are usually drift.
     const start = Math.min(r.start_line, r.end_line);
@@ -214,10 +215,13 @@ export async function findInFile(
     // Two samples often phrase the same defect differently; the fingerprint
     // buckets by file, normalised title and line region, which collapses them.
     const fp = fingerprint(unit.path, r.title, start);
-    if (seen.has(fp)) continue;
-    seen.add(fp);
+    const earlier = byFingerprint.get(fp);
+    if (earlier) {
+      earlier.samples = mergeSamples(earlier.samples, [sample]);
+      continue;
+    }
 
-    out.push({
+    const finding: Finding = {
       path: unit.path,
       startLine: start,
       endLine: end,
@@ -233,9 +237,18 @@ export async function findInFile(
         ? { path: r.settled_by.path, line: r.settled_by.line, quote: r.settled_by.quote }
         : undefined,
       fingerprint: fp,
-    });
+      samples: [sample],
+    };
+    byFingerprint.set(fp, finding);
+    out.push(finding);
   }
   return out;
+}
+
+/** The union of two findings' samples, sorted: merging duplicates keeps who found them. */
+export function mergeSamples(a: number[] | undefined, b: number[] | undefined): number[] | undefined {
+  if (!a && !b) return undefined;
+  return [...new Set([...(a ?? []), ...(b ?? [])])].sort((x, y) => x - y);
 }
 
 /**
@@ -528,6 +541,7 @@ export function collapseNearDuplicates(findings: Finding[]): Finding[] {
 
     const twin = sameRegion ?? sameFileFarApart ?? sameCause;
     if (!twin && sameArgument) {
+      sameArgument.samples = mergeSamples(sameArgument.samples, f.samples);
       sameArgument.siblings = [
         ...(sameArgument.siblings ?? []),
         { path: f.path, startLine: f.startLine, endLine: f.endLine },
@@ -543,7 +557,9 @@ export function collapseNearDuplicates(findings: Finding[]): Finding[] {
         isTest(twin.path) && !isTest(f.path) ? true
         : !isTest(twin.path) && isTest(f.path) ? false
         : !twin.suggestion && Boolean(f.suggestion);
+      const samples = mergeSamples(twin.samples, f.samples);
       if (better) Object.assign(twin, f, { _words: w, _argument: argument });
+      twin.samples = samples;
       continue;
     }
     kept.push(Object.assign({ _words: w, _argument: argument }, f));

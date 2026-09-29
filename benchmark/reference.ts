@@ -61,7 +61,7 @@ const byPath = <T extends { path: string }>(xs: T[]) => {
   return m;
 };
 
-const findingText = (label: string, f: BenchFinding) =>
+export const findingText = (label: string, f: BenchFinding) =>
   `${label} (lines ${f.startLine}-${f.endLine}): ${f.title}\n${f.body}`;
 
 // ---------------------------------------------------------------- group
