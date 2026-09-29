@@ -87,7 +87,9 @@ function walkthroughHeadline(r: ReviewResult): string {
   if (r.blocked) return `**Nothing was reviewed.** ${r.blocked.message}`;
   if (failed) return `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`;
   if (r.openFindings) {
-    return `**Nothing new in these commits.** ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open.`;
+    // "No new findings" rather than "nothing new in these commits": a full review
+    // can end here too.
+    return `**No new findings.** ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open.`;
   }
   return '**Nothing to raise.**';
 }
@@ -174,7 +176,7 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
         : r.failedFiles && r.failedFiles > 0
           ? `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`
           : r.openFindings
-            ? `Nothing new in these commits. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
+            ? `No new findings. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
             : 'Nothing to raise.',
     );
   } else {
