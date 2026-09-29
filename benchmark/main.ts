@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRun } from './child.js';
-import { methodKey, type ModelSetting } from './runs.js';
+import { collidingKeys, methodKey, runFileStem, type ModelSetting } from './runs.js';
 import { groupCauses, judgeCauses, assignFindings, extendReference, unplacedFindings, type Judges } from './reference.js';
 import { Spend, type Judge } from './judges.js';
 import { scoreCase, consistency, scoreFilters, STANDARD_FILTERS, type MethodScore } from './score.js';
@@ -41,7 +41,7 @@ interface Method {
 }
 const runsOn = (m: Method, caseId: string) => !m.cases || m.cases.includes(caseId);
 
-const safe = (s: string) => s.replace(/[^A-Za-z0-9@._-]/g, '_');
+const safe = runFileStem;
 const readJson = <T>(p: string) => JSON.parse(readFileSync(p, 'utf8')) as T;
 const writeJson = (p: string, v: unknown) => writeFileSync(p, `${JSON.stringify(v, null, 2)}\n`);
 
@@ -269,6 +269,11 @@ async function main() {
   const [configPath, stage = 'all'] = process.argv.slice(2);
   if (!configPath) throw new Error('usage: main.ts <run-config.json> [runs|reference|report|filters|all]');
   const cfg = readJson<RunConfig>(configPath);
+  const clash = collidingKeys(cfg.methods.map((m) => methodKey(m.kind, m.model)));
+  if (clash.length) {
+    throw new Error(`these methods would share run files; give them labels that differ in letters or digits: `
+      + clash.map((c) => c.join(' / ')).join('; '));
+  }
   const cases = readJson<Case[]>(cfg.cases);
   if (stage === 'runs' || stage === 'all') await runs(cfg, cases);
   if (stage === 'reference' || stage === 'all') await reference(cfg, cases);
