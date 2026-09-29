@@ -323,7 +323,10 @@ export function loadConfig(root: string): ReviewpassConfig {
     const p = join(root, name);
     if (!existsSync(p)) continue;
     const raw = parse(readFileSync(p, 'utf8')) as Record<string, unknown> | null;
-    const cfg = merge(DEFAULTS, raw);
+    // A copy, not the defaults themselves: the merge is one level deep, so a file
+    // without a `model` section would hand back `DEFAULTS.model` itself, and
+    // applyEnv would then write this run's overrides into every later default.
+    const cfg = merge(structuredClone(DEFAULTS), raw);
     // A YAML file is not type-checked on the way in, so a value the union
     // forbids reaches the request body unexamined — `reasoningEffort: maximum`
     // would be forwarded verbatim and fail every call the reviewer makes.

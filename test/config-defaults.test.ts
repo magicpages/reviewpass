@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config/index.js';
@@ -19,4 +19,16 @@ test("changing one caller's config does not change the next caller's defaults", 
   const b = fresh();
   assert.equal(b.model.name, name);
   assert.equal(b.model.verifyReasoningEffort, undefined);
+});
+
+test('a config file without a model section does not keep one run\'s environment for the next', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewpass-cfg-'));
+  writeFileSync(join(dir, '.reviewpass.yaml'), 'review:\n  requestChangesAt: critical\n');
+  process.env.REVIEWPASS_VERIFY_REASONING_EFFORT = 'none';
+  try {
+    assert.equal(loadConfig(dir).model.verifyReasoningEffort, 'none');
+  } finally {
+    delete process.env.REVIEWPASS_VERIFY_REASONING_EFFORT;
+  }
+  assert.equal(loadConfig(dir).model.verifyReasoningEffort, undefined, 'the override leaked into the defaults');
 });
