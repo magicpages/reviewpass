@@ -92,7 +92,9 @@ function walkthroughHeadline(r: ReviewResult): string {
   if (failed) return `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.${listed}`;
   if (listedCount(r)) return `**Nothing that needs a comment.**${listed}`;
   if (r.openFindings) {
-    return `**Nothing new in these commits.** ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open.`;
+    // "No new findings" rather than "nothing new in these commits": a full review
+    // can end here too.
+    return `**No new findings.** ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open.`;
   }
   return '**Nothing to raise.**';
 }
@@ -181,7 +183,7 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
           : listedCount(r)
             ? `Nothing that needs a comment; ${smallerPoints(listedCount(r))} below.`
             : r.openFindings
-              ? `Nothing new in these commits. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
+              ? `No new findings. ${r.openFindings} earlier finding${r.openFindings === 1 ? '' : 's'} still open above.`
               : 'Nothing to raise.',
     );
   } else {

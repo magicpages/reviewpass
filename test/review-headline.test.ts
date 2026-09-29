@@ -51,7 +51,7 @@ test('a blocked run says nothing was reviewed', () => {
 });
 
 test('an incremental run with nothing new keeps the open findings in view', () => {
-  assert.equal(headline(result({ openFindings: 12 })), '**Nothing new in these commits.** 12 earlier findings still open.');
+  assert.equal(headline(result({ openFindings: 12 })), '**No new findings.** 12 earlier findings still open.');
 });
 
 test('the check title does not call a partly failed review clean', () => {
