@@ -26,6 +26,8 @@ export interface ModelSetting {
   maxTokens: number;
   /** A different model for verification; the find model verifies when unset. */
   verifyName?: string;
+  /** The verify pass's own `reasoning_effort`; `effort` applies when unset. */
+  verifyEffort?: Effort;
   /** Tells apart two runs of otherwise identical settings, e.g. before and after a change. */
   label?: string;
 }
@@ -33,7 +35,8 @@ export interface ModelSetting {
 /** Unchanged for settings without the newer fields, so earlier runs are still found. */
 export const methodKey = (kind: 'reviewpass' | 'raw', m: ModelSetting) =>
   `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`
-  + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.label ? `#${m.label}` : '');
+  + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.verifyEffort ? `@${m.verifyEffort}` : '')
+  + (m.label ? `#${m.label}` : '');
 
 /**
  * A local range carries no statement of intent: LocalSource falls back to the
@@ -96,7 +99,7 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       workspace: c.workspace, fullReview: true, dryRun: true, store,
       configOverrides: {
         endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
-        reasoningEffort: m.effort, maxTokens: m.maxTokens,
+        reasoningEffort: m.effort, verifyReasoningEffort: m.verifyEffort, maxTokens: m.maxTokens,
       },
       log: {
         info: () => {},

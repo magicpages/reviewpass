@@ -27,6 +27,8 @@ export interface CallOptions {
   maxTokens?: number;
   temperature?: number;
   model?: string;
+  /** This call's `reasoning_effort`, overriding the configured one. */
+  reasoningEffort?: string;
 }
 
 export interface CallResult<T> {
@@ -189,7 +191,8 @@ export class ModelClient {
     // otherwise, and its native `think` flag is ignored on this endpoint —
     // `reasoning_effort` is the only lever. Left unset the request is unchanged,
     // so an endpoint that does not know the field never sees it.
-    if (this.cfg.model.reasoningEffort) body.reasoning_effort = this.cfg.model.reasoningEffort;
+    const effort = opts.reasoningEffort ?? this.cfg.model.reasoningEffort;
+    if (effort) body.reasoning_effort = effort;
 
     if (opts.schema) {
       body.response_format = {

@@ -386,7 +386,8 @@ export async function verify(
       ],
       VERDICT_SCHEMA,
       { schemaName: 'verdict', model: cfg.model.verifyModel ?? cfg.model.name,
-        maxTokens: verifyBudget(2048), temperature: verifyTemperature(cfg) },
+        maxTokens: verifyBudget(2048), temperature: verifyTemperature(cfg),
+        reasoningEffort: cfg.model.verifyReasoningEffort },
     );
 
     // Two gates, and only two: is it true, and does it belong on this change.
@@ -634,7 +635,8 @@ export async function verifyGroup(
       [{ role: 'system', content: VERIFIER_SYSTEM }, { role: 'user', content: prompt }],
       GROUP_VERDICT_SCHEMA,
       { schemaName: 'group_verdict', model: cfg.model.verifyModel ?? cfg.model.name,
-        maxTokens: verifyBudget(4096), temperature: verifyTemperature(cfg) },
+        maxTokens: verifyBudget(4096), temperature: verifyTemperature(cfg),
+        reasoningEffort: cfg.model.verifyReasoningEffort },
     );
 
     const byIndex = new Map(value.verdicts.map((v) => [v.index, v]));
