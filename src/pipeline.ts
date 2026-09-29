@@ -356,6 +356,8 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       findings: [], walkthrough: 'No reviewable changes in this update.', fileGroups: [],
       effort: { score: 1, label: 'Trivial' }, mergeRisk: 'minimal', checks: [],
       event: decideEvent([], cfg, false, prior.openFindings), skipped,
+      // An update with nothing reviewable must not erase what is still open.
+      openFindings: prior.openFindings,
     };
     const plan: ReviewPlan = { anchored: [], unanchored: [] };
     if (!opts.dryRun) {

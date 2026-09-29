@@ -118,7 +118,8 @@ describe('how a finished review closes its check', () => {
     );
     const two = result({ reviewedFiles: 4, failedFiles: 1, findings: [{}, {}] });
     assert.equal(two.conclusion, 'success');
-    assert.equal(two.title, '2 findings');
+    // One file failed, so the title says so rather than reading as the whole review.
+    assert.equal(two.title, '2 findings, 1 file(s) not reviewed');
     assert.match(two.summary, /4 file\(s\) reviewed, 1 failed/);
   });
 });
