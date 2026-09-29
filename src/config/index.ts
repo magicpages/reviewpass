@@ -39,6 +39,13 @@ export interface ReviewpassConfig {
      */
     reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
     /**
+     * The verify pass's own effort, for when it runs on a different model than
+     * finding: effort labels mean different things across model families, and
+     * one that suits the finder can make the verifier think until its budget
+     * runs out. Falls back to `reasoningEffort`.
+     */
+    verifyReasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+    /**
      * Extra routing sent verbatim with every request, for brokers that accept
      * it. Shape is the broker's, not ours: this does not interpret it.
      *
@@ -280,10 +287,14 @@ export function loadConfig(root: string): ReviewpassConfig {
     // forbids reaches the request body unexamined — `reasoningEffort: maximum`
     // would be forwarded verbatim and fail every call the reviewer makes.
     cfg.model.reasoningEffort = validEffort(cfg.model.reasoningEffort);
+    cfg.model.verifyReasoningEffort = validEffort(cfg.model.verifyReasoningEffort);
     // Env always wins, so a workflow can point at a different box without a commit.
     return applyEnv(cfg);
   }
-  return applyEnv({ ...DEFAULTS });
+  // A copy all the way down: a shallow one handed every caller the defaults' own
+  // `model` object, so one caller's change - or `applyEnv`'s - became the next
+  // caller's default.
+  return applyEnv(structuredClone(DEFAULTS));
 }
 
 /** Environment overrides, applied last so a workflow can redirect without a commit. */
@@ -292,10 +303,12 @@ function applyEnv(cfg: ReviewpassConfig): ReviewpassConfig {
   const model = envAny('MODEL');
   const verifyModel = envAny('VERIFY_MODEL');
   const effort = envAny('REASONING_EFFORT');
+  const verifyEffort = envAny('VERIFY_REASONING_EFFORT');
   if (endpoint) { cfg.model.endpoint = endpoint; cfg.model.endpoints = [endpoint]; }
   if (model) cfg.model.name = model;
   if (verifyModel) cfg.model.verifyModel = verifyModel;
   if (effort) cfg.model.reasoningEffort = validEffort(effort);
+  if (verifyEffort) cfg.model.verifyReasoningEffort = validEffort(verifyEffort);
   return cfg;
 }
 
