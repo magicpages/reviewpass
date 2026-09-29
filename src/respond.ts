@@ -56,9 +56,15 @@ export function actionFor(outcome: 'fixed' | 'concede' | 'hold'): { reply: boole
   return { reply: outcome !== 'fixed', resolve: outcome !== 'hold', remember: outcome === 'concede' };
 }
 
-/** Commit ids a reply names, e.g. "fixed in 0d73304". */
+/**
+ * Commit ids a reply names, e.g. "fixed in 0d73304". A run of hex inside a longer
+ * token is not one: part of a UUID (`123e4567-e89b-...`) or a colour
+ * (`#e5dcf9ff`) would otherwise read as a commit never pushed, and the thread
+ * would be skipped for good.
+ */
 export function citedCommits(text: string): string[] {
-  return [...new Set(text.match(/\b[0-9a-f]{7,40}\b/g) ?? [])].filter((h) => /[a-f]/.test(h) && /\d/.test(h));
+  return [...new Set(text.match(/(?<![#\w-])[0-9a-f]{7,40}(?![\w-])/g) ?? [])]
+    .filter((h) => /[a-f]/.test(h) && /\d/.test(h));
 }
 
 /**

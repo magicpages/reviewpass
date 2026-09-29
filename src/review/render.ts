@@ -89,7 +89,11 @@ function walkthroughHeadline(r: ReviewResult): string {
   const listed = listedCount(r) ? ` ${smallerPoints(listedCount(r))} listed in the review.` : '';
   if (n > 0) return `**${n} finding${n === 1 ? '' : 's'}.**${failed ? ` ${failedOf(r)} and were not reviewed.` : ''}${listed}`;
   if (r.blocked) return `**Nothing was reviewed.** ${r.blocked.message}`;
-  if (failed) return `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.${listed}`;
+  if (failed) {
+    return listed
+      ? `**Incomplete review.** ${failedOf(r)}; nothing in the rest needs a comment.${listed}`
+      : `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`;
+  }
   if (listedCount(r)) return `**Nothing that needs a comment.**${listed}`;
   if (r.openFindings) {
     // "No new findings" rather than "nothing new in these commits": a full review
@@ -179,7 +183,9 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
       r.blocked
         ? `_${r.blocked.message} This says nothing about the change._`
         : r.failedFiles && r.failedFiles > 0
-          ? `**Incomplete review.** ${failedOf(r)}; nothing was raised in the rest.`
+          ? `**Incomplete review.** ${failedOf(r)}; ${listedCount(r)
+            ? `nothing in the rest needs a comment - ${smallerPoints(listedCount(r))} below.`
+            : 'nothing was raised in the rest.'}`
           : listedCount(r)
             ? `Nothing that needs a comment; ${smallerPoints(listedCount(r))} below.`
             : r.openFindings

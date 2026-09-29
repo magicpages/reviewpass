@@ -63,3 +63,10 @@ test('markers in review bodies count as already said', async () => {
   const existing = await client.loadExistingReview(1);
   assert.deepEqual([...existing.fingerprints].sort(), ['aaa1', 'bbb2', 'ccc3']);
 });
+
+test('an incomplete review with listed points does not say nothing was raised', () => {
+  const r = result({ reviewedFiles: 3, failedFiles: 2, listed: [f('Update the stale comment', 'bbb2')] });
+  const headline = renderWalkthrough(pr, r).split('\n')[3]!;
+  assert.equal(headline, '**Incomplete review.** 2 of 5 file(s) failed; nothing in the rest needs a comment. 1 smaller point listed in the review.');
+  assert.doesNotMatch(renderReviewSummary(r, []), /nothing was raised/);
+});

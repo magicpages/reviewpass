@@ -15,6 +15,9 @@ test('a fix is resolved quietly; a concession is resolved and remembered; a hold
 test('the commits a reply cites are found, and words that only look like hex are not', () => {
   assert.deepEqual(citedCommits('Fixed in `0d73304` and 9d3b26353.'), ['0d73304', '9d3b26353']);
   assert.deepEqual(citedCommits('the deadbeef fixture, 1234567 rows, #e5dcf9'), []);
+  assert.deepEqual(citedCommits('id 123e4567-e89b-12d3-a456-426614174000, colour #e5dcf9ff'), [],
+    'part of a UUID or a colour is not a commit');
+  assert.deepEqual(citedCommits('(9d3b263)'), ['9d3b263']);
 });
 
 test('a cited commit is unseen until it is on the pull request, however shallow the checkout', () => {

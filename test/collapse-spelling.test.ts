@@ -21,9 +21,11 @@ const other = at('Slice trigrams by code point, not UTF-16 code unit, or astral 
   'The diff makes the strip regex keep Unicode letters, so astral characters now survive into `padded`.');
 
 test('British and American spellings of one finding collapse into one', () => {
-  assert.equal(collapseNearDuplicates([british, american]).length, 1);
+  const out = collapseNearDuplicates([british, american]);
+  assert.deepEqual(out.map((x) => x.title), [british.title], 'the first phrasing is kept');
 });
 
 test('a different point on the same line is still kept apart', () => {
-  assert.equal(collapseNearDuplicates([british, american, other]).length, 2);
+  const out = collapseNearDuplicates([british, american, other]);
+  assert.deepEqual(out.map((x) => x.title).sort(), [british.title, other.title].sort());
 });
