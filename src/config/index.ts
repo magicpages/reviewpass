@@ -92,6 +92,28 @@ export interface ReviewpassConfig {
      * inside the verifier cost 63% of real defects when it was tried.
      */
     minImportance: number;
+    /**
+     * How many findings a first review posts as inline comments. The rest are
+     * listed in the review body - ranked, visible, but not a thread each.
+     * Critical findings are always inline.
+     */
+    maxInline: number;
+    /** Drop findings the find pass rated trivial. */
+    dropTrivial: boolean;
+    /**
+     * Maintainability findings go inline at this verifier importance and above,
+     * are listed at `maintainabilityListAt` and above, and are dropped below it.
+     */
+    maintainabilityInlineAt: number;
+    maintainabilityListAt: number;
+    /**
+     * A follow-up round - a review of new commits - posts inline only what is
+     * at least `followUpMinSeverity` or rated `followUpMinImportance` and up,
+     * at most `followUpMaxInline` of them. The rest are listed.
+     */
+    followUpMaxInline: number;
+    followUpMinSeverity: 'critical' | 'major' | 'minor' | 'trivial';
+    followUpMinImportance: number;
     postWalkthrough: boolean;
   };
   investigation: {
@@ -178,6 +200,25 @@ const DEFAULTS: ReviewpassConfig = {
     // that would pass either way. Everything above it is ranked, not gated -
     // a PR with eight genuine problems should be able to report eight.
     minImportance: 0,
+    // A first review of a large change posted 69 findings, 25 inline: too many
+    // to read, and every reply opened another thread. Past this many, findings
+    // are listed in the review body rather than dropped - the author still sees
+    // all of them, which is what the maxFindings note above is about.
+    maxInline: 15,
+    dropTrivial: true,
+    // Measured on four frozen pull requests, every finding judged blind:
+    // maintainability findings were 84 of 124 false positives, and 3 of 87 named
+    // a real defect. By the verifier's importance they split cleanly - 5 and up
+    // were stale comments and missing tests the change made necessary, 2-3 were
+    // taste. So only this category is gated on importance.
+    maintainabilityInlineAt: 5,
+    maintainabilityListAt: 4,
+    // A follow-up round reviews the author's fixes. Treated like a first review,
+    // one round of fixes drew 18 new findings; a colleague re-checks and raises
+    // only what matters.
+    followUpMaxInline: 3,
+    followUpMinSeverity: 'major',
+    followUpMinImportance: 7,
     postWalkthrough: true,
   },
   investigation: { enabled: true, maxTurns: 6, maxOutputChars: 200_000 },

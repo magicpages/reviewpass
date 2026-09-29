@@ -154,4 +154,6 @@ export interface ReviewResult {
   openFindings?: number;
   /** Set when nothing could be reviewed for a reason the author cannot fix. */
   blocked?: { message: string };
+  /** Verified findings listed in the review body rather than posted inline. */
+  listed?: Finding[];
 }

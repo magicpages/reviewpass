@@ -23,6 +23,7 @@ import {
   collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves, guardsImpossibleState,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
+import { triageFindings } from './review/triage.js';
 import type { Finding, PullRequestContext, ReviewUnit, ReviewResult } from './types.js';
 
 export interface Logger {
@@ -640,7 +641,14 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     log.info(`Verification kept ${kept.length} of ${grounded.length}`);
   }
 
-  const findings = rankAndCap(kept, cfg.review.maxFindings);
+  // A review of new commits on a pull request already reviewed is a follow-up
+  // round, held to a higher bar than the first look.
+  const triaged = triageFindings(rankAndCap(kept, cfg.review.maxFindings), cfg.review, pr.isIncremental === true);
+  const findings = triaged.inline;
+  if (triaged.listed.length || triaged.dropped.length) {
+    log.info(`Posting ${findings.length} inline; listing ${triaged.listed.length} in the review body; `
+      + `not posting ${triaged.dropped.length} (trivial or low-importance maintainability)`);
+  }
 
   // ── summarise ─────────────────────────────────────────────────────────────
   const [walk, checks] = await Promise.all([
@@ -667,7 +675,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
   const result: ReviewResult = {
     findings, walkthrough: walk.summary, fileGroups: walk.groups,
     effort: walk.effort, mergeRisk: walk.mergeRisk, checks, event, skipped,
-    reviewedFiles, failedFiles: failures, blocked, openFindings: prior.openFindings,
+    reviewedFiles, failedFiles: failures, blocked, openFindings: prior.openFindings, listed: triaged.listed,
   };
 
   // ── post ──────────────────────────────────────────────────────────────────
@@ -728,12 +736,12 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
         walkthroughId,
       );
     }
-    const stillOpen = new Set(findings.map((f) => f.fingerprint!));
+    const stillOpen = new Set([...findings, ...triaged.listed].map((f) => f.fingerprint!));
     const gone = new Set([...prior.fingerprints].filter((fp) => !stillOpen.has(fp)));
     resolved = await gh.resolveThreads(prNumber, gone).catch(() => 0);
   }
 
-  for (const f of [...findings, ...refuted]) {
+  for (const f of [...findings, ...triaged.listed, ...refuted]) {
     store?.recordFinding({
       scope, pr: prNumber, headSha: pr.headSha, fingerprint: f.fingerprint!,
       path: f.path, startLine: f.startLine, endLine: f.endLine,
