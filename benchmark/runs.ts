@@ -13,7 +13,7 @@ import { FileLearningStore } from '../src/store/file-learnings.js';
 import { ModelClient } from '../src/model/client.js';
 import { loadConfig, type ReviewpassConfig } from '../src/config/index.js';
 import type { Finding, PullRequestContext } from '../src/types.js';
-import type { BenchFinding, Case, Run } from './types.js';
+import type { BenchFinding, Case, FindingMeta, Run } from './types.js';
 
 export type Effort = NonNullable<ReviewpassConfig['model']['reasoningEffort']>;
 
@@ -24,10 +24,34 @@ export interface ModelSetting {
   effort?: Effort;
   /** Initial find budget; reviewpass escalates it on a length failure. */
   maxTokens: number;
+  /** A different model for verification; the find model verifies when unset. */
+  verifyName?: string;
+  /** The verify pass's own `reasoning_effort`; `effort` applies when unset. */
+  verifyEffort?: Effort;
+  /** Tells apart two runs of otherwise identical settings, e.g. before and after a change. */
+  label?: string;
 }
 
+/** A method key as it appears in run file names. */
+export const runFileStem = (key: string) => key.replace(/[^A-Za-z0-9@._-]/g, '_');
+
+/**
+ * Method keys that would share run files. The file name folds every character it
+ * cannot hold into `_`, so `label: "a/b"` and `label: "a:b"` would read each
+ * other's runs. Refused before anything runs rather than changing the encoding,
+ * which would orphan every run already written.
+ */
+export function collidingKeys(keys: string[]): string[][] {
+  const byStem = new Map<string, Set<string>>();
+  for (const k of keys) byStem.set(runFileStem(k), (byStem.get(runFileStem(k)) ?? new Set()).add(k));
+  return [...byStem.values()].filter((s) => s.size > 1).map((s) => [...s]);
+}
+
+/** Unchanged for settings without the newer fields, so earlier runs are still found. */
 export const methodKey = (kind: 'reviewpass' | 'raw', m: ModelSetting) =>
-  `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`;
+  `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`
+  + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.verifyEffort ? `@${m.verifyEffort}` : '')
+  + (m.label ? `#${m.label}` : '');
 
 /**
  * A local range carries no statement of intent: LocalSource falls back to the
@@ -44,9 +68,30 @@ class CaseSource extends LocalSource {
   }
 }
 
+/**
+ * What the method recorded about a finding, or nothing when it recorded nothing.
+ * A raw finding has none of these fields; an empty `meta` would still mark it as
+ * one the filters can read, and every filter on support would then drop it.
+ */
+export function findingMeta(f: Partial<Finding>): FindingMeta | undefined {
+  const meta: FindingMeta = {};
+  if (f.severity !== undefined) meta.severity = f.severity;
+  if (f.category !== undefined) meta.category = f.category;
+  if (f.importance !== undefined) meta.importance = f.importance;
+  if (f.confidence !== undefined) meta.confidence = f.confidence;
+  if (f.verdictReason !== undefined) meta.verdictReason = f.verdictReason;
+  if (f.samples !== undefined) meta.samples = f.samples;
+  return Object.keys(meta).length ? meta : undefined;
+}
+
 const bench = (caseId: string, method: string, run: number) =>
-  (f: { path: string; startLine: number; endLine: number; title: string; body: string }, i: number): BenchFinding =>
-    ({ id: `${caseId}/${method}/${run}/${i}`, path: f.path, startLine: f.startLine, endLine: f.endLine, title: f.title, body: f.body });
+  (f: { path: string; startLine: number; endLine: number; title: string; body: string } & Partial<Finding>, i: number): BenchFinding => {
+    const meta = findingMeta(f);
+    return {
+      id: `${caseId}/${method}/${run}/${i}`, path: f.path, startLine: f.startLine, endLine: f.endLine, title: f.title, body: f.body,
+      ...(meta ? { meta } : {}),
+    };
+  };
 
 /**
  * reviewpass as it runs in CI, against a frozen checkout.
@@ -84,8 +129,8 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       source: new CaseSource(c), token: '', owner: 'bench', repo: c.id, prNumber: Number(c.id),
       workspace: c.workspace, fullReview: true, dryRun: true, store,
       configOverrides: {
-        endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.name,
-        reasoningEffort: m.effort, maxTokens: m.maxTokens,
+        endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
+        reasoningEffort: m.effort, verifyReasoningEffort: m.verifyEffort, maxTokens: m.maxTokens,
       },
       log: {
         info: () => {},

@@ -1,7 +1,7 @@
 /**
  * The benchmark, end to end: runs, then the reference, then the report.
  *
- *   npx tsx benchmark/main.ts <run-config.json> [runs|reference|report|all]
+ *   npx tsx benchmark/main.ts <run-config.json> [runs|reference|report|filters|all]
  *
  * Every stage writes its result and skips work already done, so an interrupted
  * benchmark resumes rather than paying for the same calls twice. Endpoints,
@@ -11,10 +11,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRun } from './child.js';
-import { methodKey, type ModelSetting } from './runs.js';
-import { groupCauses, judgeCauses, assignFindings, type Judges } from './reference.js';
+import { collidingKeys, methodKey, runFileStem, type ModelSetting } from './runs.js';
+import { groupCauses, judgeCauses, assignFindings, extendReference, unplacedFindings, type Judges } from './reference.js';
 import { Spend, type Judge } from './judges.js';
-import { scoreCase, consistency, type MethodScore } from './score.js';
+import { scoreCase, consistency, scoreFilters, STANDARD_FILTERS, type MethodScore } from './score.js';
 import type { BenchFinding, Case, ReferenceEntry, Run } from './types.js';
 
 interface JudgeConfig extends Omit<Judge, 'key'> { keyEnv: string }
@@ -41,7 +41,7 @@ interface Method {
 }
 const runsOn = (m: Method, caseId: string) => !m.cases || m.cases.includes(caseId);
 
-const safe = (s: string) => s.replace(/[^A-Za-z0-9@._-]/g, '_');
+const safe = runFileStem;
 const readJson = <T>(p: string) => JSON.parse(readFileSync(p, 'utf8')) as T;
 const writeJson = (p: string, v: unknown) => writeFileSync(p, `${JSON.stringify(v, null, 2)}\n`);
 
@@ -90,7 +90,14 @@ function loadRuns(cfg: RunConfig, caseId: string): Run[] {
 
 const judge = (j: JudgeConfig): Judge => ({ ...j, key: key(j.keyEnv) });
 
-interface CaseReference { entries: ReferenceEntry[]; placed: [string, string | null][]; disputed: number; spent: number }
+interface CaseReference {
+  entries: ReferenceEntry[];
+  placed: [string, string | null][];
+  disputed: number;
+  spent: number;
+  /** How many times new runs were placed into it after it was built. */
+  extensions?: number;
+}
 
 async function reference(cfg: RunConfig, cases: Case[]) {
   const dir = join(cfg.out, 'reference');
@@ -101,7 +108,6 @@ async function reference(cfg: RunConfig, cases: Case[]) {
   process.env.BENCH_JUDGE_CACHE = join(cfg.out, 'judge-cache');
   for (const c of cases) {
     const out = join(dir, `${c.id}.json`);
-    if (existsSync(out)) continue;
     const rs = loadRuns(cfg, c.id);
     // A degraded run's findings are not what the method produces, and a reference
     // built from them goes stale the moment the run is redone.
@@ -116,6 +122,22 @@ async function reference(cfg: RunConfig, cases: Case[]) {
     }));
     const pool = [...rs.flatMap((r) => [...r.findings, ...r.refuted]), ...history];
     const before = spend.spent;
+    if (existsSync(out)) {
+      // Built already. Runs added since then are placed into it rather than
+      // judging the whole case again.
+      const ref = readJson<CaseReference>(out);
+      const fresh = unplacedFindings(pool, ref.placed);
+      if (!fresh.length) continue;
+      const n = (ref.extensions ?? 0) + 1;
+      const ext = await extendReference(c, fresh, ref.entries, j, spend, `x${n}`);
+      writeJson(out, {
+        entries: [...ref.entries, ...ext.entries], placed: [...ref.placed, ...ext.placed],
+        disputed: ref.disputed + ext.disputed, spent: ref.spent + spend.spent - before, extensions: n,
+      } satisfies CaseReference);
+      console.log(`reference ${c.id}: placed ${fresh.length} new findings, ${ext.entries.length} new causes `
+        + `(${ext.entries.filter((e) => e.defect).length} defects), spent ${(spend.spent - before).toFixed(2)}`);
+      continue;
+    }
     // Each stage is kept as it completes: a later stage failing must not make the
     // earlier, paid-for ones run again.
     const stage = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
@@ -208,14 +230,55 @@ function report(cfg: RunConfig, cases: Case[]) {
   console.log(`report: ${join(cfg.out, 'report.md')}`);
 }
 
+// ------------------------------------------------------------------ filters
+
+/**
+ * What each filter would have done to the methods that record `meta`: real
+ * defects it costs against noise it removes. Reads the runs and the reference
+ * only, so it is free to run as often as the question changes.
+ */
+function filters(cfg: RunConfig, cases: Case[]) {
+  const ref: ReferenceEntry[] = [];
+  const placed = new Map<string, string | null>();
+  const runs: Run[] = [];
+  for (const c of cases) {
+    const r = readJson<CaseReference>(join(cfg.out, 'reference', `${c.id}.json`));
+    ref.push(...r.entries);
+    for (const [k, v] of r.placed) placed.set(k, v);
+    runs.push(...loadRuns(cfg, c.id));
+  }
+  const scores = scoreFilters(ref, placed, runs, STANDARD_FILTERS);
+  const lines = ['# Filters', '', `Summed over ${cases.length} cases and every run of each method. A filter keeps a finding`
+    + ' or drops it before posting; hits are distinct reference defects a run still finds.', ''];
+  for (const method of new Set(scores.map((x) => x.method))) {
+    const mine = scores.filter((x) => x.method === method);
+    const base = mine.find((x) => x.filter === STANDARD_FILTERS[0]!.name)!;
+    lines.push(`## ${method}`, '', '| filter | hits | false findings | real defects lost | noise removed | posted |',
+      '|---|---|---|---|---|---|');
+    for (const x of mine) {
+      lines.push(`| ${x.filter} | ${x.hits} | ${x.falseFindings} | ${base.hits - x.hits} | ${base.falseFindings - x.falseFindings} | ${x.findings} |`);
+    }
+    lines.push('');
+  }
+  if (!scores.length) lines.push('No method records `meta` yet; nothing to score.');
+  writeFileSync(join(cfg.out, 'filters.md'), `${lines.join('\n')}\n`);
+  console.log(`filters: ${join(cfg.out, 'filters.md')}`);
+}
+
 async function main() {
   const [configPath, stage = 'all'] = process.argv.slice(2);
-  if (!configPath) throw new Error('usage: main.ts <run-config.json> [runs|reference|report|all]');
+  if (!configPath) throw new Error('usage: main.ts <run-config.json> [runs|reference|report|filters|all]');
   const cfg = readJson<RunConfig>(configPath);
+  const clash = collidingKeys(cfg.methods.map((m) => methodKey(m.kind, m.model)));
+  if (clash.length) {
+    throw new Error(`these methods would share run files; give them labels that differ in letters or digits: `
+      + clash.map((c) => c.join(' / ')).join('; '));
+  }
   const cases = readJson<Case[]>(cfg.cases);
   if (stage === 'runs' || stage === 'all') await runs(cfg, cases);
   if (stage === 'reference' || stage === 'all') await reference(cfg, cases);
   if (stage === 'report' || stage === 'all') report(cfg, cases);
+  if (stage === 'filters' || stage === 'all') filters(cfg, cases);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
