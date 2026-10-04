@@ -1,21 +1,22 @@
 /**
  * The benchmark, end to end: runs, then the reference, then the report.
  *
- *   npx tsx benchmark/main.ts <run-config.json> [runs|reference|report|filters|all]
+ *   npx tsx benchmark/main.ts <run-config.json> [runs|reference|report|filters|calibrate|all]
  *
  * Every stage writes its result and skips work already done, so an interrupted
  * benchmark resumes rather than paying for the same calls twice. Endpoints,
  * models and prices come from the run config; keys come from the environment,
  * named in the config and never written into it. Keep the config under eval/.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRun } from './child.js';
 import { collidingKeys, methodKey, runFileStem, type ModelSetting } from './runs.js';
-import { groupCauses, judgeCauses, assignFindings, extendReference, unplacedFindings, type Judges } from './reference.js';
+import { groupCauses, judgeCauses, assignFindings, extendReference, placeIntoReference, unplacedFindings, type Judges } from './reference.js';
+import { compareRulings, comparePlacements, withRulings, meanScores } from './calibrate.js';
 import { Spend, type Judge } from './judges.js';
 import { scoreCase, consistency, scoreFilters, STANDARD_FILTERS, type MethodScore } from './score.js';
-import type { BenchFinding, Case, ReferenceEntry, Run } from './types.js';
+import type { BenchFinding, Case, Cause, ReferenceEntry, Run } from './types.js';
 
 interface JudgeConfig extends Omit<Judge, 'key'> { keyEnv: string }
 interface RunConfig {
@@ -31,6 +32,11 @@ interface RunConfig {
   methods: Method[];
   judges: { first: JudgeConfig; second: JudgeConfig; tiebreak: JudgeConfig };
   spendCap: number;
+  /**
+   * Another panel, measured against the one the reference was built with by the
+   * `calibrate` stage before it is trusted to extend the reference.
+   */
+  calibrate?: { judges: { first: JudgeConfig; second: JudgeConfig; tiebreak: JudgeConfig } };
 }
 
 interface Method {
@@ -265,9 +271,86 @@ function filters(cfg: RunConfig, cases: Case[]) {
   console.log(`filters: ${join(cfg.out, 'filters.md')}`);
 }
 
+// ------------------------------------------------------------------ calibrate
+
+/** Every run of a case on disk, whatever config produced it. */
+function allRuns(cfg: RunConfig, caseId: string): Run[] {
+  const dir = join(cfg.out, 'runs');
+  return readdirSync(dir).filter((f) => f.startsWith(`${caseId}__`) && f.endsWith('.json'))
+    .map((f) => readJson<Run>(join(dir, f)));
+}
+
+/**
+ * Re-rule every cause of the reference with the `calibrate` panel, re-place the
+ * findings of this config's methods, and report how far the two panels agree and
+ * whether the difference would change any method's score.
+ */
+async function calibrate(cfg: RunConfig, cases: Case[]) {
+  if (!cfg.calibrate) throw new Error('the config has no "calibrate" panel');
+  const dir = join(cfg.out, 'calibration');
+  mkdirSync(dir, { recursive: true });
+  const p = cfg.calibrate.judges;
+  const j: Judges = { first: judge(p.first), second: judge(p.second), tiebreak: judge(p.tiebreak) };
+  const spend = new Spend(cfg.spendCap);
+  process.env.BENCH_UNUSABLE_DIR = join(cfg.out, 'unusable');
+  process.env.BENCH_JUDGE_CACHE = join(cfg.out, 'judge-cache');
+  const kept = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const file = join(dir, name);
+    if (existsSync(file)) return readJson<T>(file);
+    const v = await run();
+    writeJson(file, v);
+    return v;
+  };
+  const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '-');
+  const lines = ['# Calibration', '', `Reference panel: ${cfg.judges.first.name} and ${cfg.judges.second.name}, `
+    + `${cfg.judges.tiebreak.name} settling. Panel measured: ${p.first.name} and ${p.second.name}, ${p.tiebreak.name} settling.`, '',
+    '## Rulings', '', '| case | causes | agree | defect by reference only | defect by panel only | same severity |', '|---|---|---|---|---|---|'];
+  const scoreLines: string[] = [];
+  const placeLines: string[] = [];
+  for (const c of cases) {
+    const refFile = join(cfg.out, 'reference', `${c.id}.json`);
+    if (!existsSync(refFile)) throw new Error(`${c.id}: no reference to calibrate against - run the "reference" stage first`);
+    const ref = readJson<CaseReference>(refFile);
+    const placed = new Map(ref.placed);
+    const every = allRuns(cfg, c.id);
+    const history: BenchFinding[] = c.history.map((h, i) => ({
+      id: `${c.id}/history/${i}`, path: h.path, startLine: h.line, endLine: h.line, title: h.title, body: h.body,
+    }));
+    const texts = new Map([...every.flatMap((r) => [...r.findings, ...r.refuted]), ...history].map((f) => [f.id, f]));
+    const causes: Cause[] = ref.entries.map(({ id, caseId, path, members, mechanism }) => ({ id, caseId, path, members, mechanism }));
+    const ruled = await kept(`${c.id}.entries.json`, () => judgeCauses(c, causes, texts, j, spend));
+    const a = compareRulings(ref.entries, ruled);
+    lines.push(`| ${c.id} | ${a.causes} | ${pct(a.bothDefect + a.bothNot, a.causes)} | ${a.referenceOnly} | ${a.panelOnly} | `
+      + `${a.sameSeverity} of ${a.bothDefect} |`);
+
+    // Placement is what extending a reference mostly asks of a panel.
+    const mine = loadRuns(cfg, c.id).flatMap((r) => [...r.findings, ...r.refuted]).filter((f) => placed.has(f.id));
+    const replaced = new Map(await kept(`${c.id}.placed.json`,
+      async () => [...(await placeIntoReference(c, mine, ref.entries, j, spend)).final]));
+    const pl = comparePlacements(placed, replaced);
+    placeLines.push(`| ${c.id} | ${pl.findings} | ${pct(pl.same, pl.findings)} | ${pl.moved} | ${pl.unplacedByOne} |`);
+
+    // Only runs the reference has placed in full: the scores compare panels, not coverage.
+    const judged = every.filter((r) => !r.error && [...r.findings, ...r.refuted].every((f) => placed.has(f.id)));
+    const before = meanScores(ref.entries, placed, judged);
+    const after = meanScores(withRulings(ref.entries, ruled), placed, judged);
+    for (const [method, b] of before) {
+      const x = after.get(method)!;
+      scoreLines.push(`| ${c.id} | ${method} | ${b.hits.toFixed(1)} | ${x.hits.toFixed(1)} | ${b.falseFindings.toFixed(1)} | ${x.falseFindings.toFixed(1)} |`);
+    }
+  }
+  lines.push('', '## Placements', '', 'Findings of this config\'s methods, placed again under the reference\'s causes.', '',
+    '| case | findings | same cause | moved | placed by one panel only |', '|---|---|---|---|---|', ...placeLines,
+    '', '## Scores', '', 'Mean per run, same causes and placements, each panel\'s rulings.', '',
+    '| case | method | hits (reference) | hits (panel) | false (reference) | false (panel) |', '|---|---|---|---|---|---|', ...scoreLines,
+    '', `Spent ${spend.spent.toFixed(2)}, ${(spend.tokens / 1e6).toFixed(1)}M tokens.`);
+  writeFileSync(join(cfg.out, 'calibration.md'), `${lines.join('\n')}\n`);
+  console.log(`calibration: ${join(cfg.out, 'calibration.md')}`);
+}
+
 async function main() {
   const [configPath, stage = 'all'] = process.argv.slice(2);
-  if (!configPath) throw new Error('usage: main.ts <run-config.json> [runs|reference|report|filters|all]');
+  if (!configPath) throw new Error('usage: main.ts <run-config.json> [runs|reference|report|filters|calibrate|all]');
   const cfg = readJson<RunConfig>(configPath);
   const clash = collidingKeys(cfg.methods.map((m) => methodKey(m.kind, m.model)));
   if (clash.length) {
@@ -279,6 +362,7 @@ async function main() {
   if (stage === 'reference' || stage === 'all') await reference(cfg, cases);
   if (stage === 'report' || stage === 'all') report(cfg, cases);
   if (stage === 'filters' || stage === 'all') filters(cfg, cases);
+  if (stage === 'calibrate') await calibrate(cfg, cases);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

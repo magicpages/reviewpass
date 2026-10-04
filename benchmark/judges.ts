@@ -40,9 +40,12 @@ export interface Judge {
 
 export class Spend {
   private total = 0;
+  /** Tokens in and out: what a subscription endpoint, priced at zero, actually consumes. */
+  tokens = 0;
   constructor(readonly cap: number) {}
   /** `charged` is what the endpoint says it billed, when it says; the price table is the fallback. */
   add(judge: Judge, promptTokens: number, completionTokens: number, charged?: number) {
+    this.tokens += promptTokens + completionTokens;
     this.total += typeof charged === 'number' && Number.isFinite(charged)
       ? charged
       : (promptTokens * judge.price.input + completionTokens * judge.price.output) / 1e6;

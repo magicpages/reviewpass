@@ -30,6 +30,8 @@ export interface ModelSetting {
   verifyEffort?: Effort;
   /** Tells apart two runs of otherwise identical settings, e.g. before and after a change. */
   label?: string;
+  /** reviewpass only: review settings over the case repository's, e.g. `{ "findSamples": 6 }`. */
+  review?: Partial<ReviewpassConfig['review']>;
 }
 
 /** A method key as it appears in run file names. */
@@ -51,6 +53,7 @@ export function collidingKeys(keys: string[]): string[][] {
 export const methodKey = (kind: 'reviewpass' | 'raw', m: ModelSetting) =>
   `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`
   + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.verifyEffort ? `@${m.verifyEffort}` : '')
+  + (m.review ? Object.entries(m.review).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([k, v]) => `+${k}=${String(v)}`).join('') : '')
   + (m.label ? `#${m.label}` : '');
 
 /**
@@ -84,9 +87,11 @@ export function findingMeta(f: Partial<Finding>): FindingMeta | undefined {
   return Object.keys(meta).length ? meta : undefined;
 }
 
-const bench = (caseId: string, method: string, run: number) =>
+type Tier = NonNullable<FindingMeta['tier']>;
+const bench = (caseId: string, method: string, run: number, tier?: Tier) =>
   (f: { path: string; startLine: number; endLine: number; title: string; body: string } & Partial<Finding>, i: number): BenchFinding => {
-    const meta = findingMeta(f);
+    const found = findingMeta(f);
+    const meta = found && tier ? { ...found, tier } : found;
     return {
       id: `${caseId}/${method}/${run}/${i}`, path: f.path, startLine: f.startLine, endLine: f.endLine, title: f.title, body: f.body,
       ...(meta ? { meta } : {}),
@@ -132,6 +137,7 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
         endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
         reasoningEffort: m.effort, verifyReasoningEffort: m.verifyEffort, maxTokens: m.maxTokens,
       },
+      reviewOverrides: m.review,
       log: {
         info: () => {},
         warn: (s) => {
@@ -141,9 +147,14 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       },
     });
     const f = bench(c.id, method, run);
+    // Every finding verification kept, each marked with where production puts it:
+    // scoring only the inline ones would make a stricter posting rule look like a
+    // review that found less.
+    const tiered: [Tier, Finding[]][] = [['inline', out.result.findings], ['listed', out.result.listed ?? []], ['dropped', out.notPosted ?? []]];
+    let n = 0;
     return {
       caseId: c.id, method, run,
-      findings: out.result.findings.map(f),
+      findings: tiered.flatMap(([tier, fs]) => fs.map((x) => bench(c.id, method, run, tier)(x, n++))),
       refuted: out.refuted.map((x: Finding, i) => f(x, 1000 + i)),
       wallMs: Date.now() - started,
       promptTokens: out.usage.promptTokens, completionTokens: out.usage.completionTokens,

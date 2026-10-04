@@ -139,6 +139,8 @@ export interface RunOptions {
    */
   store?: LearningsBackend;
   configOverrides?: Partial<ReviewpassConfig['model']> & { profile?: 'assertive' | 'chill' };
+  /** Review settings over the repository's, e.g. a benchmark comparing sample counts. */
+  reviewOverrides?: Partial<ReviewpassConfig['review']>;
   log: Logger;
 }
 
@@ -153,6 +155,8 @@ export interface RunOutcome {
   usage: { promptTokens: number; completionTokens: number };
   candidates: number;
   refuted: Finding[];
+  /** Verified findings triage decided not to post at all (see `triageFindings`). */
+  notPosted?: Finding[];
 }
 
 /**
@@ -234,6 +238,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     Object.assign(cfg.model, Object.fromEntries(Object.entries(model).filter(([, v]) => v !== undefined)));
     if (profile) cfg.review.profile = profile;
   }
+  if (opts.reviewOverrides) Object.assign(cfg.review, opts.reviewOverrides);
 
   // The source varies (a pull request, a local git range); the review does not.
   const gh = opts.source
@@ -773,6 +778,6 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
 
   return {
     pr, result, plan, walkthrough, summary, posted, resolved,
-    usage: model.usage, candidates: found.length, refuted,
+    usage: model.usage, candidates: found.length, refuted, notPosted: triaged.dropped,
   };
 }

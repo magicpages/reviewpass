@@ -148,7 +148,10 @@ const support = (f: BenchFinding) => f.meta?.samples?.length ?? 1;
 
 /** The filters worth asking about first. Each reads only what reviewpass records. */
 export const STANDARD_FILTERS: FindingFilter[] = [
-  { name: 'as posted', keep: () => true },
+  { name: 'all verified', keep: () => true },
+  // Runs recorded before triage carry no tier; everything they kept was posted.
+  { name: 'posted inline', keep: (f) => (f.meta?.tier ?? 'inline') === 'inline' },
+  { name: 'inline or listed', keep: (f) => f.meta?.tier !== 'dropped' },
   { name: 'raised by 2+ samples', keep: (f) => support(f) >= 2 },
   { name: '2+ samples, or major and up', keep: (f) => support(f) >= 2 || (rank[f.meta?.severity ?? ''] ?? 0) >= 2 },
   { name: 'no trivial', keep: (f) => f.meta?.severity !== 'trivial' },
