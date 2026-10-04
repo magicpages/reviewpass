@@ -106,6 +106,8 @@ export interface ReviewpassConfig {
      */
     maintainabilityInlineAt: number;
     maintainabilityListAt: number;
+    /** Requests for another test or assertion are listed, never inline (critical ones excepted). */
+    listCoverageRequests: boolean;
     /**
      * A follow-up round - a review of new commits - posts inline only what is
      * at least `followUpMinSeverity` or rated `followUpMinImportance` and up,
@@ -210,9 +212,20 @@ const DEFAULTS: ReviewpassConfig = {
     // maintainability findings were 84 of 124 false positives, and 3 of 87 named
     // a real defect. By the verifier's importance they split cleanly - 5 and up
     // were stale comments and missing tests the change made necessary, 2-3 were
-    // taste. So only this category is gated on importance.
+    // taste. So only this category is gated on importance. Raising the inline
+    // bar to 7 looked free on those four pull requests and was not: on five
+    // others, scored against what the maintainer actually fixed, findings rated
+    // 5-6 were 29 real against 31 false - mostly comments the change had made
+    // untrue, which a judge of behaviour calls no defect and an author fixes.
     maintainabilityInlineAt: 5,
     maintainabilityListAt: 4,
+    // In the same benchmark, after the rules above, findings asking for another
+    // test or assertion were 1 real defect against 14 false: a test the change
+    // did not need, or one that already existed. On five more pull requests the
+    // maintainer fixed 8 of 23, so they are listed, not dropped. Defects *in* a
+    // test - a drain that does not wait, an assertion that runs too early - are
+    // not requests and stay inline.
+    listCoverageRequests: true,
     // A follow-up round reviews the author's fixes. Treated like a first review,
     // one round of fixes drew 18 new findings; a colleague re-checks and raises
     // only what matters.

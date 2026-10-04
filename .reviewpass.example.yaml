@@ -95,6 +95,12 @@ review:
   # repository may differ - `npm run benchmark` measures it.
   maintainabilityInlineAt: 5
   maintainabilityListAt: 4
+  # Requests for another test or assertion are listed, not inline. In the same
+  # benchmark they were 1 real defect against 14 false; on five more pull requests
+  # the maintainer fixed 8 of 23, which is why they are listed rather than
+  # dropped. A defect in a test - an assertion that runs too early - is not a
+  # request and stays inline.
+  listCoverageRequests: true
   # A follow-up round - new commits on a pull request already reviewed - posts
   # inline only what is at least this severe or rated this important, and at
   # most this many. A colleague re-checking raises what matters.
