@@ -67,15 +67,20 @@ export const findingText = (label: string, f: BenchFinding) =>
 // ---------------------------------------------------------------- group
 
 interface Groups { groups: { mechanism: string; members: string[] }[] }
+/**
+ * Every finding at most once, and at least one grouped. A finding the judge left
+ * out is not lost: `groupFile` groups the leftovers in a call of their own. A
+ * judge at temperature 0 that skips one finding of eighty skips it on every
+ * attempt, so demanding all of them in one reply stopped a whole reference.
+ */
 const isGroups = (fl: string[]) => (v: unknown): v is Groups => {
   if (!isObject(v) || !Array.isArray(v.groups)) return false;
   const seen: string[] = [];
   for (const g of v.groups) {
-    if (!isObject(g) || typeof g.mechanism !== 'string' || !Array.isArray(g.members)) return false;
-    for (const m of g.members) { if (typeof m !== 'string') return false; seen.push(label(m)); }
+    if (!isObject(g) || typeof g.mechanism !== 'string' || !Array.isArray(g.members) || !g.members.length) return false;
+    for (const m of g.members) { if (typeof m !== 'string' || !fl.includes(label(m))) return false; seen.push(label(m)); }
   }
-  // Every finding exactly once: a dropped one would vanish from the reference.
-  return seen.length === fl.length && fl.every((l) => seen.includes(l));
+  return seen.length > 0 && new Set(seen).size === seen.length;
 };
 const groupsSchema = (fl: string[]) => ({
   type: 'object', additionalProperties: false, required: ['groups'],
@@ -87,26 +92,28 @@ const groupsSchema = (fl: string[]) => ({
 export async function groupCauses(c: Case, findings: BenchFinding[], judge: Judge, spend: Spend): Promise<Cause[]> {
   const causes: Cause[] = [];
   for (const [path, fs] of byPath(findings)) {
-    const fl = labels('F', fs.length);
-    let groups: Groups['groups'];
-    if (fs.length === 1) {
-      groups = [{ mechanism: `${fs[0]!.title} ${fs[0]!.body}`.trim(), members: ['F1'] }];
-    } else {
-      const v = await ask(judge,
-        'You group code review findings by the defect they describe. Two findings belong together only if they name the same '
-        + 'mechanism - the same thing going wrong for the same reason. Sharing a location is not enough, and neither is a similar '
-        + 'topic. Put every finding in exactly one group; a finding unlike all others is a group of one. For each group, state '
-        + 'the mechanism in one or two sentences.',
-        `${fileContext(c, path)}\n\n## Findings\n\n${fs.map((f, i) => findingText(fl[i]!, f)).join('\n\n')}`,
-        groupsSchema(fl), isGroups(fl), spend);
-      groups = v.groups;
-    }
-    groups.forEach((g, gi) => causes.push({
-      id: `${c.id}/${path}#${gi}`, caseId: c.id, path, mechanism: g.mechanism,
-      members: g.members.map((m) => fs[fl.indexOf(label(m))]!.id),
+    (await groupFile(c, path, fs, judge, spend)).forEach((g, gi) => causes.push({
+      id: `${c.id}/${path}#${gi}`, caseId: c.id, path, mechanism: g.mechanism, members: g.members.map((f) => f.id),
     }));
   }
   return causes;
+}
+
+async function groupFile(c: Case, path: string, fs: BenchFinding[], judge: Judge, spend: Spend,
+): Promise<{ mechanism: string; members: BenchFinding[] }[]> {
+  if (fs.length === 1) return [{ mechanism: `${fs[0]!.title} ${fs[0]!.body}`.trim(), members: fs }];
+  const fl = labels('F', fs.length);
+  const v = await ask(judge,
+    'You group code review findings by the defect they describe. Two findings belong together only if they name the same '
+    + 'mechanism - the same thing going wrong for the same reason. Sharing a location is not enough, and neither is a similar '
+    + 'topic. Put every finding in exactly one group; a finding unlike all others is a group of one. For each group, state '
+    + 'the mechanism in one or two sentences.',
+    `${fileContext(c, path)}\n\n## Findings\n\n${fs.map((f, i) => findingText(fl[i]!, f)).join('\n\n')}`,
+    groupsSchema(fl), isGroups(fl), spend);
+  const groups = v.groups.map((g) => ({ mechanism: g.mechanism, members: g.members.map((m) => fs[fl.indexOf(label(m))]!) }));
+  const grouped = new Set(groups.flatMap((g) => g.members));
+  const left = fs.filter((f) => !grouped.has(f));
+  return left.length ? [...groups, ...await groupFile(c, path, left, judge, spend)] : groups;
 }
 
 // ---------------------------------------------------------------- judge
@@ -124,12 +131,22 @@ const rulingsSchema = (cl: string[]) => ({
     properties: { cause: { type: 'string', enum: cl }, defect: { type: 'boolean' },
       severity: { type: 'string', enum: SEVERITIES }, reason: { type: 'string' } } } } },
 });
+/**
+ * What counts as a defect. Judged against what one maintainer actually fixed on
+ * five pull requests, a rubric of behaviour alone ruled 14 of 22 fixes no defect:
+ * tests that checked less than they claimed, comments the change made untrue,
+ * and claims rejected only because the code they rest on was not in the prompt.
+ * Maintainers fix those as readily as bugs, so they count.
+ */
 const JUDGE_SYSTEM = 'You decide, against the code, whether each candidate describes a real defect in this change. A defect is '
-  + 'behaviour the code actually gets wrong - a bug, a vulnerability, lost data, a broken contract - that you can confirm from the '
-  + 'code shown. Style preferences, speculation the code does not support, and suggestions without a defect behind them are not '
-  + 'defects. Judge only from the code; do not assume the candidate is right. Severity, for defects: critical = security or data '
-  + 'loss in normal use; high = wrong behaviour users will hit; medium = wrong behaviour in edge cases; low = minor. For a '
-  + 'non-defect, give the severity it would have had. Rule on every cause exactly once.';
+  + 'behaviour the code actually gets wrong - a bug, a vulnerability, lost data, a broken contract. These are defects too: a '
+  + 'comment, docstring or document that this change made untrue; a test that cannot fail, or does not check what its name or '
+  + 'comment says; and a test this change needs for a branch or failure path it introduces. Style preferences, speculation the '
+  + 'code contradicts, and suggestions without a defect behind them are not defects. When a claim rests on code you are not '
+  + 'shown, judge it by the code you are shown and how such code ordinarily behaves; do not reject it only because the rest is '
+  + 'not shown. Do not assume the candidate is right. Severity, for defects: critical = security or data loss in normal use; '
+  + 'high = wrong behaviour users will hit; medium = wrong behaviour in edge cases; low = minor, including untrue comments and '
+  + 'test gaps. For a non-defect, give the severity it would have had. Rule on every cause exactly once.';
 
 async function rule(c: Case, path: string, cs: Cause[], texts: Map<string, BenchFinding>, judge: Judge, spend: Spend) {
   const cl = labels('C', cs.length);
@@ -190,9 +207,29 @@ export function batches<T>(xs: T[], size: number): T[][] {
 async function place(c: Case, path: string, fs: BenchFinding[], cs: ReferenceEntry[], judge: Judge, spend: Spend) {
   const out = new Map<string, string | null>();
   for (const batch of batches(fs, PLACE_BATCH)) {
-    for (const [k, v] of await placeBatch(c, path, batch, cs, judge, spend)) out.set(k, v);
+    for (const [k, v] of await placeHalving(c, path, batch, cs, judge, spend)) out.set(k, v);
   }
   return out;
+}
+
+/**
+ * A batch the judge cannot answer whole is placed in halves. At temperature 0 a
+ * judge repeats its mistake: one placed 25 of 26 findings on every attempt and
+ * stopped an extension. Half the batch is a different question. A single
+ * finding it cannot place still fails, loudly.
+ */
+async function placeHalving(c: Case, path: string, fs: BenchFinding[], cs: ReferenceEntry[], judge: Judge, spend: Spend,
+): Promise<Map<string, string | null>> {
+  try {
+    return await placeBatch(c, path, fs, cs, judge, spend);
+  } catch (e) {
+    if (fs.length < 2 || !/no usable verdict/.test(String(e))) throw e;
+    const mid = Math.ceil(fs.length / 2);
+    return new Map([
+      ...await placeHalving(c, path, fs.slice(0, mid), cs, judge, spend),
+      ...await placeHalving(c, path, fs.slice(mid), cs, judge, spend),
+    ]);
+  }
 }
 
 async function placeBatch(c: Case, path: string, fs: BenchFinding[], cs: ReferenceEntry[], judge: Judge, spend: Spend) {
@@ -256,6 +293,21 @@ export function renumberCauses(entries: ReferenceEntry[], placed: Map<string, st
 }
 
 /**
+ * Both judges place each finding blind under the causes already judged, and the
+ * tiebreak settles where they differ. `null` is a finding no cause fits.
+ */
+export async function placeIntoReference(c: Case, findings: BenchFinding[], ref: ReferenceEntry[], j: Judges, spend: Spend) {
+  const firstPlacement = new Map<string, string | null>();
+  for (const [path, fs] of byPath(findings)) {
+    const cs = ref.filter((e) => e.path === path);
+    for (const [f, cause] of (cs.length ? await place(c, path, fs, cs, j.first, spend) : new Map(fs.map((x) => [x.id, null])))) {
+      firstPlacement.set(f, cause);
+    }
+  }
+  return assignFindings(c, findings, ref, j, spend, firstPlacement);
+}
+
+/**
  * Place findings from new runs into an existing reference without judging it
  * again. Both judges place each new finding blind under the causes already
  * there, and the tiebreak settles where they differ - the same two-judge rule
@@ -265,14 +317,7 @@ export function renumberCauses(entries: ReferenceEntry[], placed: Map<string, st
  */
 export async function extendReference(c: Case, fresh: BenchFinding[], ref: ReferenceEntry[], j: Judges, spend: Spend,
   tag: string) {
-  const firstPlacement = new Map<string, string | null>();
-  for (const [path, fs] of byPath(fresh)) {
-    const cs = ref.filter((e) => e.path === path);
-    for (const [f, cause] of (cs.length ? await place(c, path, fs, cs, j.first, spend) : new Map(fs.map((x) => [x.id, null])))) {
-      firstPlacement.set(f, cause);
-    }
-  }
-  const known = await assignFindings(c, fresh, ref, j, spend, firstPlacement);
+  const known = await placeIntoReference(c, fresh, ref, j, spend);
   const leftover = fresh.filter((f) => known.final.get(f.id) === null);
   if (!leftover.length) return { entries: [] as ReferenceEntry[], placed: known.final, disputed: known.disputed };
 

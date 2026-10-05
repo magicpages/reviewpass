@@ -6,12 +6,14 @@
  * twenty-five of them inline, each opening a thread, is a review nobody reads to
  * the end - and a round of fixes that draws eighteen more trains the author to
  * stop reading. So a first review posts its most important findings inline and
- * lists the rest; a follow-up round raises only what matters; and the two kinds
- * of finding that were measured to be mostly noise - trivial ones, and
- * maintainability findings the verifier rated low - are listed or dropped.
+ * lists the rest; a follow-up round raises only what matters; and the kinds of
+ * finding that were measured to be mostly noise - trivial ones, maintainability
+ * findings the verifier rated low, and requests for more tests - are listed or
+ * dropped.
  */
 import type { ReviewpassConfig } from '../config/index.js';
 import type { Finding } from '../types.js';
+import { isCoverageRequest } from './run.js';
 
 export interface Triaged {
   /** Posted as inline comments, in ranked order. */
@@ -41,6 +43,7 @@ export function triageFindings(ranked: Finding[], review: ReviewpassConfig['revi
       if (importance < review.maintainabilityListAt) { out.dropped.push(f); continue; }
       if (importance < review.maintainabilityInlineAt) { out.listed.push(f); continue; }
     }
+    if (review.listCoverageRequests && !critical && isCoverageRequest(f)) { out.listed.push(f); continue; }
     if (followUp && !critical) {
       const severe = SEVERITY_RANK[f.severity] >= SEVERITY_RANK[review.followUpMinSeverity];
       const important = importance !== undefined && importance >= review.followUpMinImportance;

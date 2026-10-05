@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extendReference, renumberCauses, unplacedFindings } from '../benchmark/reference.js';
+import { extendReference, groupCauses, renumberCauses, unplacedFindings } from '../benchmark/reference.js';
 import { Spend, type Judge } from '../benchmark/judges.js';
 import type { BenchFinding, Case, ReferenceEntry } from '../benchmark/types.js';
 
@@ -31,7 +31,9 @@ test('new causes get ids apart from the old ones, and their placements follow', 
 });
 
 /** A judge endpoint that answers whatever schema it is sent, choosing causes by `pick`. */
-async function stubJudges(pick: (causes: string[], placement: number) => string, fn: (j: Judge, kinds: string[]) => Promise<void>) {
+async function stubJudges(pick: (causes: string[], placement: number) => string, fn: (j: Judge, kinds: string[]) => Promise<void>,
+  /** Leave out the last finding of any placement asked for more than this many: a judge that skips one. */
+  skipLastAbove = Infinity) {
   const kinds: string[] = [];
   let placements = 0;
   const server = createServer((req, res) => {
@@ -44,9 +46,11 @@ async function stubJudges(pick: (causes: string[], placement: number) => string,
       const item = props[kind].items.properties;
       const n = kind === 'placements' ? placements++ : -1;
       const answer = kind === 'placements'
-        ? { placements: item.finding.enum.map((f: string) => ({ finding: f, cause: pick(item.cause.enum, n) })) }
+        ? { placements: item.finding.enum.slice(0, item.finding.enum.length > skipLastAbove ? -1 : undefined)
+          .map((f: string) => ({ finding: f, cause: pick(item.cause.enum, n) })) }
         : kind === 'groups'
-          ? { groups: [{ mechanism: 'a new mechanism', members: item.members.items.enum }] }
+          ? { groups: [{ mechanism: 'a new mechanism',
+            members: item.members.items.enum.slice(0, item.members.items.enum.length > skipLastAbove ? -1 : undefined) }] }
           : { rulings: item.cause.enum.map((c: string) => ({ cause: c, defect: true, severity: 'high', reason: 'r' })) };
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(answer) } }], usage: {} }));
@@ -101,4 +105,25 @@ test('a finding no judge can place becomes a new cause, apart from the old ids',
     assert.deepEqual([...ext.placed], [['n1', 'c/a.ts#0+x1']]);
     assert.deepEqual(kinds, ['placements', 'placements', 'rulings', 'rulings', 'placements']);
   });
+});
+
+test('a batch the judge keeps answering short is placed in halves', async () => {
+  const c = workspace();
+  await stubJudges((cs) => cs[0]!, async (judge, kinds) => {
+    const fresh = ['n1', 'n2', 'n3', 'n4'].map(finding);
+    const ext = await extendReference(c, fresh, existing, { first: judge, second: judge, tiebreak: judge }, new Spend(1), 'x1');
+    assert.deepEqual([...ext.placed].map(([f, cause]) => [f, cause]), fresh.map((f) => [f.id, 'c/a.ts#0']));
+    // Per judge: four rejected attempts at all four, then one call per half.
+    assert.equal(kinds.length, 2 * (4 + 2));
+  }, 2);
+});
+
+test('a finding the grouping judge leaves out is grouped on its own, not lost', async () => {
+  const c = workspace();
+  await stubJudges((cs) => cs[0]!, async (judge, kinds) => {
+    const causes = await groupCauses(c, ['n1', 'n2', 'n3'].map(finding), judge, new Spend(1));
+    assert.deepEqual(causes.map((x) => x.members), [['n1', 'n2'], ['n3']]);
+    assert.deepEqual(causes.map((x) => x.id), ['c/a.ts#0', 'c/a.ts#1'], 'ids stay distinct across the follow-up');
+    assert.deepEqual(kinds, ['groups'], 'one finding left needs no second call');
+  }, 2);
 });

@@ -31,6 +31,12 @@ quotes its code and its review history.
    has at least one finding under. Location alone does not count, and three
    findings on one defect are one hit.
 
+A defect is behaviour the code gets wrong, and also what maintainers fix as
+readily: a comment or document the change made untrue, a test that cannot fail or
+checks less than it claims, and a test the change needs for a path it adds. A
+rubric of behaviour alone ruled most such fixes no defect, which steered posting
+rules against what authors act on. References built before this rubric differ.
+
 Choose judges from model families that none of the methods under test use, so no
 model grades its own lineage.
 
@@ -60,12 +66,18 @@ npm run benchmark -- eval/bench/run-config.json      # runs, reference, report
 ```
 
 `benchmark` takes an optional stage after the config: `runs`, `reference`,
-`report` or `filters` (default `all`). `filters` re-scores the runs of every
+`report`, `filters` or `calibrate` (default `all`, which runs every stage but
+`calibrate`). `filters` re-scores the runs of every
 method that records `meta` as if it had dropped findings by a rule before
 posting (agreement between samples, severity, category, importance,
 confidence), and writes `filters.md`: the real defects each rule costs against
 the noise it removes. It reads the runs and the reference only, so it costs
-nothing to run. Every stage skips work already done, so an interrupted
+nothing to run. `calibrate` measures another panel of judges against the one the reference was
+built with, before that panel is trusted to extend it: it re-rules every cause,
+re-places the findings of the config's methods, and writes `calibration.md` with
+how often the panels agree and every method's score under each panel's rulings.
+Use it when the judges you can afford come from a family under test. Every
+stage skips work already done, so an interrupted
 benchmark resumes where it stopped:
 
 - A finished run is not repeated. A failed or degraded run is.
@@ -101,9 +113,10 @@ Setup writes `cases.json` next to the spec.
 | `parallel` | Runs in flight at once. Each is its own process. |
 | `keyEnv` | Name of the environment variable holding the key for the methods' endpoint. Keys are never written into the config. |
 | `env` | Optional environment for reviewed runs, for example `{ "REVIEWPASS_CONCURRENCY": "2" }` for an endpoint that rate-limits bursts. |
-| `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens", "verifyName"?, "label"? }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `verifyName` verifies with a different model than the one that finds. `label` tells apart two runs of otherwise identical settings. `cases` limits a method to some case ids. |
+| `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens", "verifyName"?, "verifyEffort"?, "review"?, "label"? }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `verifyName` verifies with a different model than the one that finds. `review` sets review settings over the case repository's, for example `{ "findSamples": 6 }`, and becomes part of the method's name. `label` tells apart two runs of otherwise identical settings. `cases` limits a method to some case ids. |
 | `judges` | `first`, `second`, `tiebreak`: `{ "name", "endpoint", "model", "keyEnv", "price": { "input", "output" }, "maxTokens"?, "timeoutMs"?, "extra"? }`. `price` is per million tokens. `timeoutMs` is the deadline for one call, reply included (default ten minutes); a call that misses it is retried like a rate limit. `extra` is sent verbatim with every judge call, for example provider routing or `{ "reasoning": { "enabled": false } }`. |
 | `spendCap` | Stop judging once this much has been spent in one invocation. Uses the cost the endpoint reports when it reports one, the price table otherwise. |
+| `calibrate` | Optional. `{ "judges": { "first", "second", "tiebreak" }, "name"? }`, the panel the `calibrate` stage measures, in the same shape as `judges`. `name` (default `calibration`) names its directory and report, so several calibrations sit side by side. A judge on a subscription endpoint takes `price: { "input": 0, "output": 0 }`; the stage reports the tokens it used. |
 
 ## Output
 

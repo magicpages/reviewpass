@@ -15,7 +15,7 @@ const shipped = loadConfig(mkdtempSync(join(tmpdir(), 'reviewpass-cfg-'))).revie
 // The rules are tested against thresholds stated here, not against whatever the
 // defaults happen to be; the defaults are pinned once, below.
 const review = {
-  ...shipped, maxInline: 15, dropTrivial: true, maintainabilityInlineAt: 5, maintainabilityListAt: 4,
+  ...shipped, maxInline: 15, dropTrivial: true, maintainabilityInlineAt: 5, maintainabilityListAt: 4, listCoverageRequests: true,
   followUpMaxInline: 3, followUpMinSeverity: 'major' as const, followUpMinImportance: 7,
 };
 const f = (title: string, over: Partial<Finding> = {}): Finding => ({
@@ -74,10 +74,31 @@ test('in a follow-up round a maintainability finding also meets the follow-up ba
   assert.deepEqual([titles(t.inline), titles(t.listed)], [['stale comment, major'], ['stale comment, minor']]);
 });
 
+test('requests for another test are listed; defects in a test stay inline', () => {
+  const t = triageFindings([
+    f('Add a test for the DNS failure path', { path: 'src/fetch.ts' }),
+    f('Cover the DNS-failure path', { path: 'src/fetch.test.ts' }),
+    f('Assert the title line too', { path: 'src/pdf.test.ts' }),
+    f('Await the upload before asserting it was not called', { path: 'src/pdf.test.ts' }),
+    f('Cover the 0200:5efe ISATAP variant, not just 0000:5efe', { path: 'src/validate.ts' }),
+    f('Add an assertion for the response status', { path: 'src/api.test.ts' }),
+  ], review, false);
+  assert.deepEqual(titles(t.listed), ['Add a test for the DNS failure path', 'Cover the DNS-failure path', 'Assert the title line too',
+    'Add an assertion for the response status']);
+  assert.deepEqual(titles(t.inline), ['Await the upload before asserting it was not called', 'Cover the 0200:5efe ISATAP variant, not just 0000:5efe']);
+});
+
+test('a critical request for a test is still inline, and the rule can be turned off', () => {
+  const critical = triageFindings([f('Add a test for the auth bypass', { severity: 'critical' })], review, false);
+  assert.equal(critical.inline.length, 1);
+  const off = triageFindings([f('Add a test for the DNS failure path')], { ...review, listCoverageRequests: false }, false);
+  assert.equal(off.inline.length, 1);
+});
+
 test('the shipped defaults', () => {
   assert.deepEqual(
     [shipped.maxInline, shipped.dropTrivial, shipped.maintainabilityInlineAt, shipped.maintainabilityListAt,
-      shipped.followUpMaxInline, shipped.followUpMinSeverity, shipped.followUpMinImportance],
-    [15, true, 5, 4, 3, 'major', 7],
+      shipped.listCoverageRequests, shipped.followUpMaxInline, shipped.followUpMinSeverity, shipped.followUpMinImportance],
+    [15, true, 5, 4, true, 3, 'major', 7],
   );
 });

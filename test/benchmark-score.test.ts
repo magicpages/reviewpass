@@ -89,6 +89,15 @@ test('method keys stay as they were for settings without the newer fields', asyn
   assert.equal(methodKey('reviewpass', { ...m, verifyName: 'model-b', label: 'meta' }), 'reviewpass@model-a@low@32768+verify=model-b#meta');
 });
 
+test('review settings are part of the method key, in a fixed order', async () => {
+  const { methodKey } = await import('../benchmark/runs.js');
+  const m = { endpoint: 'e', name: 'model-a', effort: 'low' as const, maxTokens: 32768 };
+  const a = methodKey('reviewpass', { ...m, review: { findSamples: 6, verify: true } });
+  const b = methodKey('reviewpass', { ...m, review: { verify: true, findSamples: 6 } });
+  assert.equal(a, 'reviewpass@model-a@low@32768+findSamples=6+verify=true');
+  assert.equal(a, b, 'the order the settings are written in must not make a second method');
+});
+
 test('a filter is scored as if the method had applied it before posting', async () => {
   const { scoreFilters, STANDARD_FILTERS } = await import('../benchmark/score.js');
   const withMeta = (id: string, samples: number[], severity = 'minor'): BenchFinding => ({ ...f(id), meta: { samples, severity } });
@@ -100,9 +109,24 @@ test('a filter is scored as if the method had applied it before posting', async 
   const scores = scoreFilters(ref, placed, runs, STANDARD_FILTERS);
   const by = (name: string) => scores.find((s) => s.filter === name)!;
   assert.ok(scores.every((s) => s.method === 'm'), 'a method without meta cannot be filtered, so it is not scored');
-  assert.deepEqual([by('as posted').hits, by('as posted').falseFindings], [2, 2]);
+  assert.deepEqual([by('all verified').hits, by('all verified').falseFindings], [2, 2]);
   // Requiring agreement drops the lone real defect and both lone noise findings.
   assert.deepEqual([by('raised by 2+ samples').hits, by('raised by 2+ samples').falseFindings], [1, 0]);
   // Letting major findings through regardless keeps the lone major noise.
   assert.deepEqual([by('2+ samples, or major and up').hits, by('2+ samples, or major and up').falseFindings], [1, 1]);
+});
+
+test('tier filters score what the author is shown; runs without tiers count as posted inline', async () => {
+  const { scoreFilters, STANDARD_FILTERS } = await import('../benchmark/score.js');
+  const tiered = (id: string, tier?: 'inline' | 'listed' | 'dropped'): BenchFinding => ({ ...f(id), meta: { severity: 'minor', ...(tier ? { tier } : {}) } });
+  const runs: Run[] = [{
+    caseId: 'c', method: 'm', run: 1, refuted: [], wallMs: 0, promptTokens: 0, completionTokens: 0,
+    findings: [tiered('agreed', 'inline'), tiered('lone', 'listed'), tiered('loneNoise', 'dropped'), tiered('loneMajor')],
+  }];
+  const placed = new Map([['agreed', 'bug'], ['lone', 'bug2'], ['loneNoise', 'noise'], ['loneMajor', 'noise']]);
+  const scores = scoreFilters(ref, placed, runs, STANDARD_FILTERS);
+  const by = (name: string) => scores.find((s) => s.filter === name)!;
+  assert.equal(by('all verified').findings, 4);
+  assert.equal(by('inline or listed').findings, 3);
+  assert.equal(by('posted inline').findings, 2);
 });

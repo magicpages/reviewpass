@@ -65,6 +65,12 @@ export interface FindingMeta {
   verdictReason?: string;
   /** Which find samples raised it (reviewpass only). */
   samples?: number[];
+  /**
+   * Where reviewpass put a verified finding: posted inline, listed in the review
+   * body, or not posted. A run records all three, so a benchmark can score what
+   * verification kept and what the author is shown separately.
+   */
+  tier?: 'inline' | 'listed' | 'dropped';
 }
 
 /** One run of one method on one case. */

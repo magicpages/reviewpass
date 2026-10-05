@@ -252,20 +252,6 @@ export function mergeSamples(a: number[] | undefined, b: number[] | undefined): 
 }
 
 /**
- * Is the verifier's quoted disproof really in what it was shown?
- *
- * Whitespace and line numbers differ between the rendered context and a quote
- * copied out of it, so both sides are flattened before comparing. Very short
- * quotes are rejected outright: `}` appears in every file and proves nothing.
- */
-function quoteAppearsIn(quote: string, prompt: string): boolean {
-  const flatten = (s: string) => s.replace(/^\s*\d+\s/gm, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-  const q = flatten(quote);
-  if (q.length < 12) return false;
-  return flatten(prompt).includes(q);
-}
-
-/**
  * Adversarial verification. A reviewer that withdraws its own weak findings
  * of its own findings after pushback — this pass tries to do that work before
  * the author ever sees them.
@@ -644,21 +630,18 @@ export async function verifyGroup(
     );
 
     const byIndex = new Map(value.verdicts.map((v) => [v.index, v]));
-    return findings.map((f, i) => {
+    const ownMerit = (v: { correct: boolean; in_scope: boolean }) => v.correct && v.in_scope !== false;
+    const judged = findings.map((f, i): Finding => {
       const v = byIndex.get(i);
       // A finding the verifier did not answer for is kept: silence is not a
       // refutation, and dropping it would delete a finding on a technicality.
       if (!v) return { ...f, verdict: 'upheld' as const, verdictReason: 'no verdict returned', confidence: 0.5 };
 
-      const duplicate = v.duplicate_of >= 0 && v.duplicate_of < findings.length && v.duplicate_of !== i;
       let importance = Math.max(1, Math.min(10, Math.round(v.importance ?? 5)));
       if (/^\s*(ensure|verify|confirm|make sure|check)\b/i.test(f.title)) importance = Math.min(importance, 4);
 
-      const kept = v.correct && v.in_scope !== false && !duplicate;
-      const why = duplicate ? `duplicate of finding ${v.duplicate_of}`
-        : !v.correct ? 'incorrect'
-        : v.in_scope === false ? 'out of scope' : '';
-
+      const kept = ownMerit(v);
+      const why = !v.correct ? 'incorrect' : v.in_scope === false ? 'out of scope' : '';
       return {
         ...f,
         severity: severityFor(f.severity, importance),
@@ -668,6 +651,43 @@ export async function verifyGroup(
         importance,
       };
     });
+
+    // A duplicate is only dropped in favour of a finding that is posted. Dropped
+    // unconditionally, it went down with whatever it was folded into: the
+    // verifier merged a real defect into a neighbour it then refuted, and both
+    // disappeared - four of the ten real defects one benchmark's verifier lost.
+    // The duplicate's samples go to the finding that stands for it, so the
+    // agreement between samples is not lost with it.
+    const standsFor = (i: number): number | undefined => {
+      const seen = new Set<number>([i]);
+      let at = i;
+      for (;;) {
+        const next = byIndex.get(at)?.duplicate_of;
+        if (next === undefined || next < 0 || next >= findings.length || seen.has(next)) break;
+        seen.add(next);
+        at = next;
+      }
+      return at === i ? undefined : at;
+    };
+    // In order, against the verdicts as they stand: of two findings named as
+    // each other's duplicate, the first folds into the second and the second,
+    // whose partner is no longer posted, stays.
+    //
+    // The finding that stands for both carries the better rating of the two. The
+    // verifier says they are one defect; rated on the weaker phrasing, that defect
+    // could fall to trivial and be dropped by triage, taking the duplicate with it.
+    judged.forEach((f, i) => {
+      const target = standsFor(i);
+      if (target === undefined || judged[target]!.verdict !== 'upheld') return;
+      const t = judged[target]!;
+      const rated = f.verdict === 'upheld'
+        ? { importance: Math.max(t.importance ?? 0, f.importance ?? 0),
+            severity: SEVERITY_RANK[f.severity] > SEVERITY_RANK[t.severity] ? f.severity : t.severity }
+        : {};
+      judged[target] = { ...t, ...rated, samples: mergeSamples(t.samples, f.samples) };
+      judged[i] = { ...f, verdict: 'refuted', verdictReason: `duplicate of finding ${target}: ${byIndex.get(i)!.reason}` };
+    });
+    return judged;
   } catch {
     // Fall back to judging them individually rather than losing the region.
     return Promise.all(findings.map((f) => verify(model, cfg, f, unit, pr, deps)));
@@ -730,11 +750,14 @@ export function capPerRegion(findings: Finding[], perRegion = 2): Finding[] {
  * code does wrong, because a reader's attention runs out long before the list
  * does, and it should run out on the defects.
  */
-function isCoverageRequest(f: Finding): boolean {
+export function isCoverageRequest(f: Pick<Finding, 'path' | 'title'>): boolean {
   const onTestFile = /\.(test|spec)\.[jt]sx?$|__tests__\//.test(f.path);
+  // "Cover the DNS-failure path" asks for a test on a test file and for a code
+  // path on a source file - "cover the ISATAP variant" there was a real gap in
+  // a validator - so `cover` counts only where `assert` does: on a test file.
   const asksForCoverage =
-    /^\s*(add|write)\b.*\b(test|tests|case|coverage)\b/i.test(f.title) ||
-    /^\s*(assert|test|verify)\b/i.test(f.title) ||
+    /^\s*(add|write)\b.*\b(tests?|cases?|coverage|assertions?)\b/i.test(f.title) ||
+    /^\s*(assert|test|verify|cover)\b/i.test(f.title) ||
     /\bdoes not assert\b|\bis not asserted\b|\bno assertion\b/i.test(f.title);
   // File location is a hint, not the rule. "Test the PDF function" is a request
   // for coverage wherever it is anchored - it was anchored on the source file
