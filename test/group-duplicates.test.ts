@@ -46,8 +46,8 @@ async function judge(verdicts: Verdict[], findings: Finding[]): Promise<Finding[
   }
 }
 
-const v = (index: number, correct: boolean, duplicate_of = -1): Verdict =>
-  ({ index, correct, in_scope: true, importance: 5, duplicate_of, reason: `reason ${index}` });
+const v = (index: number, correct: boolean, duplicate_of = -1, importance = 5): Verdict =>
+  ({ index, correct, in_scope: true, importance, duplicate_of, reason: `reason ${index}` });
 
 test('a duplicate of a posted finding is dropped, and its samples go to that finding', async () => {
   const out = await judge([v(0, true), v(1, true, 0)], [finding(0, [0]), finding(1, [2, 3])]);
@@ -79,4 +79,17 @@ test('two findings named as each other\'s duplicate keep one of them', async () 
   const out = await judge([v(0, true, 1), v(1, true, 0)], [finding(0, [0]), finding(1, [1])]);
   assert.deepEqual(out.map((f) => f.verdict), ['refuted', 'upheld']);
   assert.deepEqual(out[1]!.samples, [0, 1]);
+});
+
+test('the finding that stands for a duplicate keeps the better rating of the two', async () => {
+  // Rated 1 alone, the target would become trivial and triage would drop it -
+  // and the defect with it, since its duplicate is folded away.
+  const out = await judge([v(0, true, -1, 1), v(1, true, 0, 6)], [finding(0, [0]), finding(1, [1])]);
+  assert.equal(out[1]!.verdict, 'refuted');
+  assert.deepEqual([out[0]!.importance, out[0]!.severity], [6, 'minor']);
+});
+
+test('a duplicate that is itself wrong does not raise the rating of what it folds into', async () => {
+  const out = await judge([v(0, true, -1, 3), v(1, false, 0, 9)], [finding(0, [0]), finding(1, [1])]);
+  assert.equal(out[0]!.importance, 3);
 });

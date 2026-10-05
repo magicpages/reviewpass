@@ -252,20 +252,6 @@ export function mergeSamples(a: number[] | undefined, b: number[] | undefined): 
 }
 
 /**
- * Is the verifier's quoted disproof really in what it was shown?
- *
- * Whitespace and line numbers differ between the rendered context and a quote
- * copied out of it, so both sides are flattened before comparing. Very short
- * quotes are rejected outright: `}` appears in every file and proves nothing.
- */
-function quoteAppearsIn(quote: string, prompt: string): boolean {
-  const flatten = (s: string) => s.replace(/^\s*\d+\s/gm, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-  const q = flatten(quote);
-  if (q.length < 12) return false;
-  return flatten(prompt).includes(q);
-}
-
-/**
  * Adversarial verification. A reviewer that withdraws its own weak findings
  * of its own findings after pushback — this pass tries to do that work before
  * the author ever sees them.
@@ -686,10 +672,19 @@ export async function verifyGroup(
     // In order, against the verdicts as they stand: of two findings named as
     // each other's duplicate, the first folds into the second and the second,
     // whose partner is no longer posted, stays.
+    //
+    // The finding that stands for both carries the better rating of the two. The
+    // verifier says they are one defect; rated on the weaker phrasing, that defect
+    // could fall to trivial and be dropped by triage, taking the duplicate with it.
     judged.forEach((f, i) => {
       const target = standsFor(i);
       if (target === undefined || judged[target]!.verdict !== 'upheld') return;
-      judged[target] = { ...judged[target]!, samples: mergeSamples(judged[target]!.samples, f.samples) };
+      const t = judged[target]!;
+      const rated = f.verdict === 'upheld'
+        ? { importance: Math.max(t.importance ?? 0, f.importance ?? 0),
+            severity: SEVERITY_RANK[f.severity] > SEVERITY_RANK[t.severity] ? f.severity : t.severity }
+        : {};
+      judged[target] = { ...t, ...rated, samples: mergeSamples(t.samples, f.samples) };
       judged[i] = { ...f, verdict: 'refuted', verdictReason: `duplicate of finding ${target}: ${byIndex.get(i)!.reason}` };
     });
     return judged;
@@ -761,7 +756,7 @@ export function isCoverageRequest(f: Pick<Finding, 'path' | 'title'>): boolean {
   // path on a source file - "cover the ISATAP variant" there was a real gap in
   // a validator - so `cover` counts only where `assert` does: on a test file.
   const asksForCoverage =
-    /^\s*(add|write)\b.*\b(tests?|cases?|coverage)\b/i.test(f.title) ||
+    /^\s*(add|write)\b.*\b(tests?|cases?|coverage|assertions?)\b/i.test(f.title) ||
     /^\s*(assert|test|verify|cover)\b/i.test(f.title) ||
     /\bdoes not assert\b|\bis not asserted\b|\bno assertion\b/i.test(f.title);
   // File location is a hint, not the rule. "Test the PDF function" is a request

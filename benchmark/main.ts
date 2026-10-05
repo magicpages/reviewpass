@@ -8,6 +8,7 @@
  * models and prices come from the run config; keys come from the environment,
  * named in the config and never written into it. Keep the config under eval/.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRun } from './child.js';
@@ -323,9 +324,13 @@ async function calibrate(cfg: RunConfig, cases: Case[]) {
     lines.push(`| ${c.id} | ${a.causes} | ${pct(a.bothDefect + a.bothNot, a.causes)} | ${a.referenceOnly} | ${a.panelOnly} | `
       + `${a.sameSeverity} of ${a.bothDefect} |`);
 
-    // Placement is what extending a reference mostly asks of a panel.
-    const mine = loadRuns(cfg, c.id).flatMap((r) => [...r.findings, ...r.refuted]).filter((f) => placed.has(f.id));
-    const replaced = new Map(await kept(`${c.id}.placed.json`,
+    // Placement is what extending a reference mostly asks of a panel. Only the
+    // runs on disk: a method not run on this case has nothing to place. The
+    // cache is keyed by the findings placed, so changing the methods places again.
+    const keys = new Set(cfg.methods.filter((m) => runsOn(m, c.id)).map((m) => methodKey(m.kind, m.model)));
+    const mine = every.filter((r) => keys.has(r.method)).flatMap((r) => [...r.findings, ...r.refuted]).filter((f) => placed.has(f.id));
+    const placedKey = createHash('sha256').update(mine.map((f) => f.id).sort().join('\n')).digest('hex').slice(0, 12);
+    const replaced = new Map(await kept(`${c.id}.placed.${placedKey}.json`,
       async () => [...(await placeIntoReference(c, mine, ref.entries, j, spend)).final]));
     const pl = comparePlacements(placed, replaced);
     placeLines.push(`| ${c.id} | ${pl.findings} | ${pct(pl.same, pl.findings)} | ${pl.moved} | ${pl.unplacedByOne} |`);

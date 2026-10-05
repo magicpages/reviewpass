@@ -81,8 +81,10 @@ test('requests for another test are listed; defects in a test stay inline', () =
     f('Assert the title line too', { path: 'src/pdf.test.ts' }),
     f('Await the upload before asserting it was not called', { path: 'src/pdf.test.ts' }),
     f('Cover the 0200:5efe ISATAP variant, not just 0000:5efe', { path: 'src/validate.ts' }),
+    f('Add an assertion for the response status', { path: 'src/api.test.ts' }),
   ], review, false);
-  assert.deepEqual(titles(t.listed), ['Add a test for the DNS failure path', 'Cover the DNS-failure path', 'Assert the title line too']);
+  assert.deepEqual(titles(t.listed), ['Add a test for the DNS failure path', 'Cover the DNS-failure path', 'Assert the title line too',
+    'Add an assertion for the response status']);
   assert.deepEqual(titles(t.inline), ['Await the upload before asserting it was not called', 'Cover the 0200:5efe ISATAP variant, not just 0000:5efe']);
 });
 
