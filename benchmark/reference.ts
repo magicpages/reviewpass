@@ -131,12 +131,22 @@ const rulingsSchema = (cl: string[]) => ({
     properties: { cause: { type: 'string', enum: cl }, defect: { type: 'boolean' },
       severity: { type: 'string', enum: SEVERITIES }, reason: { type: 'string' } } } } },
 });
+/**
+ * What counts as a defect. Judged against what one maintainer actually fixed on
+ * five pull requests, a rubric of behaviour alone ruled 14 of 22 fixes no defect:
+ * tests that checked less than they claimed, comments the change made untrue,
+ * and claims rejected only because the code they rest on was not in the prompt.
+ * Maintainers fix those as readily as bugs, so they count.
+ */
 const JUDGE_SYSTEM = 'You decide, against the code, whether each candidate describes a real defect in this change. A defect is '
-  + 'behaviour the code actually gets wrong - a bug, a vulnerability, lost data, a broken contract - that you can confirm from the '
-  + 'code shown. Style preferences, speculation the code does not support, and suggestions without a defect behind them are not '
-  + 'defects. Judge only from the code; do not assume the candidate is right. Severity, for defects: critical = security or data '
-  + 'loss in normal use; high = wrong behaviour users will hit; medium = wrong behaviour in edge cases; low = minor. For a '
-  + 'non-defect, give the severity it would have had. Rule on every cause exactly once.';
+  + 'behaviour the code actually gets wrong - a bug, a vulnerability, lost data, a broken contract. These are defects too: a '
+  + 'comment, docstring or document that this change made untrue; a test that cannot fail, or does not check what its name or '
+  + 'comment says; and a test this change needs for a branch or failure path it introduces. Style preferences, speculation the '
+  + 'code contradicts, and suggestions without a defect behind them are not defects. When a claim rests on code you are not '
+  + 'shown, judge it by the code you are shown and how such code ordinarily behaves; do not reject it only because the rest is '
+  + 'not shown. Do not assume the candidate is right. Severity, for defects: critical = security or data loss in normal use; '
+  + 'high = wrong behaviour users will hit; medium = wrong behaviour in edge cases; low = minor, including untrue comments and '
+  + 'test gaps. For a non-defect, give the severity it would have had. Rule on every cause exactly once.';
 
 async function rule(c: Case, path: string, cs: Cause[], texts: Map<string, BenchFinding>, judge: Judge, spend: Spend) {
   const cl = labels('C', cs.length);

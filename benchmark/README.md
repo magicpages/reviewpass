@@ -31,6 +31,12 @@ quotes its code and its review history.
    has at least one finding under. Location alone does not count, and three
    findings on one defect are one hit.
 
+A defect is behaviour the code gets wrong, and also what maintainers fix as
+readily: a comment or document the change made untrue, a test that cannot fail or
+checks less than it claims, and a test the change needs for a path it adds. A
+rubric of behaviour alone ruled most such fixes no defect, which steered posting
+rules against what authors act on. References built before this rubric differ.
+
 Choose judges from model families that none of the methods under test use, so no
 model grades its own lineage.
 
@@ -110,7 +116,7 @@ Setup writes `cases.json` next to the spec.
 | `methods` | `[{ "kind": "reviewpass" \| "raw", "model": { "endpoint", "name", "effort"?, "maxTokens", "verifyName"?, "verifyEffort"?, "review"?, "label"? }, "cases"? }]`. `effort` is sent as `reasoning_effort`. `verifyName` verifies with a different model than the one that finds. `review` sets review settings over the case repository's, for example `{ "findSamples": 6 }`, and becomes part of the method's name. `label` tells apart two runs of otherwise identical settings. `cases` limits a method to some case ids. |
 | `judges` | `first`, `second`, `tiebreak`: `{ "name", "endpoint", "model", "keyEnv", "price": { "input", "output" }, "maxTokens"?, "timeoutMs"?, "extra"? }`. `price` is per million tokens. `timeoutMs` is the deadline for one call, reply included (default ten minutes); a call that misses it is retried like a rate limit. `extra` is sent verbatim with every judge call, for example provider routing or `{ "reasoning": { "enabled": false } }`. |
 | `spendCap` | Stop judging once this much has been spent in one invocation. Uses the cost the endpoint reports when it reports one, the price table otherwise. |
-| `calibrate` | Optional. `{ "judges": { "first", "second", "tiebreak" } }`, the panel the `calibrate` stage measures, in the same shape as `judges`. A judge on a subscription endpoint takes `price: { "input": 0, "output": 0 }`; the stage reports the tokens it used. |
+| `calibrate` | Optional. `{ "judges": { "first", "second", "tiebreak" }, "name"? }`, the panel the `calibrate` stage measures, in the same shape as `judges`. `name` (default `calibration`) names its directory and report, so several calibrations sit side by side. A judge on a subscription endpoint takes `price: { "input": 0, "output": 0 }`; the stage reports the tokens it used. |
 
 ## Output
 

@@ -37,7 +37,11 @@ interface RunConfig {
    * Another panel, measured against the one the reference was built with by the
    * `calibrate` stage before it is trusted to extend the reference.
    */
-  calibrate?: { judges: { first: JudgeConfig; second: JudgeConfig; tiebreak: JudgeConfig } };
+  calibrate?: {
+    judges: { first: JudgeConfig; second: JudgeConfig; tiebreak: JudgeConfig };
+    /** Directory and report name under `out`, so calibrations of different panels or rubrics sit side by side. */
+    name?: string;
+  };
 }
 
 interface Method {
@@ -288,7 +292,8 @@ function allRuns(cfg: RunConfig, caseId: string): Run[] {
  */
 async function calibrate(cfg: RunConfig, cases: Case[]) {
   if (!cfg.calibrate) throw new Error('the config has no "calibrate" panel');
-  const dir = join(cfg.out, 'calibration');
+  const name = cfg.calibrate.name ?? 'calibration';
+  const dir = join(cfg.out, name);
   mkdirSync(dir, { recursive: true });
   const p = cfg.calibrate.judges;
   const j: Judges = { first: judge(p.first), second: judge(p.second), tiebreak: judge(p.tiebreak) };
@@ -349,8 +354,8 @@ async function calibrate(cfg: RunConfig, cases: Case[]) {
     '', '## Scores', '', 'Mean per run, same causes and placements, each panel\'s rulings.', '',
     '| case | method | hits (reference) | hits (panel) | false (reference) | false (panel) |', '|---|---|---|---|---|---|', ...scoreLines,
     '', `Spent ${spend.spent.toFixed(2)}, ${(spend.tokens / 1e6).toFixed(1)}M tokens.`);
-  writeFileSync(join(cfg.out, 'calibration.md'), `${lines.join('\n')}\n`);
-  console.log(`calibration: ${join(cfg.out, 'calibration.md')}`);
+  writeFileSync(join(cfg.out, `${name}.md`), `${lines.join('\n')}\n`);
+  console.log(`calibration: ${join(cfg.out, `${name}.md`)}`);
 }
 
 async function main() {
