@@ -80,6 +80,10 @@ review:
   # the third looks across files; the fourth looks for what the code does *not*
   # do, which is the failure a diff cannot show you. Drop to 2 for speed.
   findSamples: 4
+  # One more pass over the whole change at once, beside the per-file passes: the
+  # pull request, its diff and the changed files in a single plain request. It
+  # finds defects that only show across files. Off by default while measured.
+  wholeChangePass: false
 
   # What is posted inline and what is listed. A first review posts at most
   # maxInline findings as comments, in ranked order; the rest are listed in a

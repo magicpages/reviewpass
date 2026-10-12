@@ -85,6 +85,8 @@ export interface ReviewpassConfig {
     verify: boolean;
     /** How many times to sample the find pass and union the results. */
     findSamples: number;
+    /** One extra find pass over the whole change at once, beside the per-file passes. */
+    wholeChangePass: boolean;
     /**
      * Findings rated at or below this by the verifier are dropped as trivia.
      * The verifier rates 1-10 and refuses only what is untrue; volume is
@@ -198,6 +200,8 @@ const DEFAULTS: ReviewpassConfig = {
     // earns its place on its own: it found the Mongo-operator defect that no
     // other configuration in this benchmark ever found.
     findSamples: 4,
+    // Off until it is measured with verification in the loop; see findInChange.
+    wholeChangePass: false,
     // 1-2 is trivia by the rubric: restates the code, pure style, an assertion
     // that would pass either way. Everything above it is ranked, not gated -
     // a PR with eight genuine problems should be able to report eight.

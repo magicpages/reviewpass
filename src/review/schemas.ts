@@ -64,6 +64,27 @@ export const FINDINGS_SCHEMA = {
   },
 } as const;
 
+/**
+ * The same findings over the whole change at once, so each names its file.
+ */
+const findingItem = FINDINGS_SCHEMA.properties.findings.items;
+export const WHOLE_CHANGE_SCHEMA = {
+  ...FINDINGS_SCHEMA,
+  properties: {
+    findings: {
+      ...FINDINGS_SCHEMA.properties.findings,
+      items: {
+        ...findingItem,
+        required: ['path', ...findingItem.required],
+        properties: {
+          path: { type: 'string', description: 'The changed file the defect is in, exactly as listed' },
+          ...findingItem.properties,
+        },
+      },
+    },
+  },
+} as const;
+
 export const VERDICT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
