@@ -8,20 +8,21 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeEnv, readReply, splitMessages, ClaudeLimitError } from '../src/model/claude-code.js';
+import { claudeArgs, claudeEnv, readReply, splitMessages, ClaudeAuthError, ClaudeLimitError } from '../src/model/claude-code.js';
 import { ModelClient } from '../src/model/client.js';
 import { loadConfig } from '../src/config/index.js';
 import { classifyBlocker } from '../src/model/blocked.js';
 
 afterEach(() => { for (const k of ['REVIEWPASS_BACKEND', 'REVIEWPASS_CLAUDE_COMMAND', 'ANTHROPIC_API_KEY']) delete process.env[k]; });
 
-test('a call is single-turn, tool-free and isolated, and never runs in bare mode', () => {
+test('a call is tool-free, isolated, short and never runs in bare mode', () => {
   const args = claudeArgs({ model: 'sonnet', schema: { type: 'object' }, effort: 'none' }, '/tmp/s.md');
   assert.ok(!args.includes('--bare'), 'bare mode accepts only an API key: the subscription would not be used');
   for (const flag of ['-p', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']) assert.ok(args.includes(flag), flag);
   assert.deepEqual(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2), ['--tools', '']);
   assert.deepEqual(args.slice(args.indexOf('--setting-sources'), args.indexOf('--setting-sources') + 2), ['--setting-sources', '']);
-  assert.deepEqual(args.slice(args.indexOf('--max-turns'), args.indexOf('--max-turns') + 2), ['--max-turns', '1']);
+  assert.deepEqual(args.slice(args.indexOf('--max-turns'), args.indexOf('--max-turns') + 2), ['--max-turns', '3'],
+    'room for the structured-output call when the model answers in prose first');
   assert.equal(args[args.indexOf('--json-schema') + 1], '{"type":"object"}');
   assert.ok(!args.includes('--effort'), '"none" is not a Claude Code effort level and is not sent');
   assert.equal(claudeArgs({ model: 'haiku', effort: 'low' }, '/tmp/s.md').at(-1), 'low');
@@ -46,7 +47,10 @@ test('the reply: structured output, usage, limits and failures', () => {
     'Fix the rate limit reached handler', 'a review that mentions a limit is not a limit');
   assert.throws(() => readReply(JSON.stringify({ subtype: 'success', is_error: true, result: "You've hit your session limit · resets 11am" }), '', 1),
     ClaudeLimitError);
-  assert.throws(() => readReply('', 'Invalid API key · Please run /login', 1), /without a JSON reply/);
+  assert.throws(() => readReply('', 'Invalid API key · Please run /login', 1), ClaudeAuthError);
+  assert.throws(() => readReply(JSON.stringify({ subtype: 'success', is_error: true,
+    result: 'Failed to authenticate. API Error: 401 Invalid bearer token' }), '', 1), ClaudeAuthError, 'what a mistyped token produced in CI');
+  assert.throws(() => readReply('', 'segfault', 139), /without a JSON reply/);
   assert.throws(() => readReply(JSON.stringify({ subtype: 'error_max_turns', is_error: true }), '', 1), /error_max_turns/);
 });
 
@@ -90,7 +94,8 @@ test('the backend is read from the environment, and a mistyped one fails loudly'
 test('a review that could not run says why, in words the operator can act on', () => {
   assert.match(classifyBlocker(new Error('Claude subscription limit: hit your session limit'))!.message, /usage limit is reached/);
   assert.match(classifyBlocker(new Error('spawn claude ENOENT'))!.message, /not installed on this runner/);
-  assert.match(classifyBlocker(new Error('claude exited 1 without a JSON reply: Invalid API key · Please run /login'))!.message, /CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(classifyBlocker(new Error('Claude Code is not signed in: Failed to authenticate. API Error: 401 Invalid bearer token'))!.message,
+    /CLAUDE_CODE_OAUTH_TOKEN/);
 });
 
 test('a CLI that exits without reading a large prompt fails the call instead of crashing the review', async () => {
@@ -104,7 +109,7 @@ process.exit(1);
   chmodSync(fake, 0o755);
   await assert.rejects(
     claudeCodeCall({ model: 'sonnet', system: 's', prompt: 'x'.repeat(8_000_000), timeoutMs: 30_000, command: fake }),
-    /claude reported error_during_execution .*Please run \/login/,
+    ClaudeAuthError,
   );
 });
 

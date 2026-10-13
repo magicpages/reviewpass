@@ -2,7 +2,7 @@
  * Model calls through the official Claude Code CLI, on a Claude subscription.
  *
  * Each call is one `claude -p` process: no tools, no MCP servers, no settings or
- * CLAUDE.md from anywhere, no saved session, one turn, in an empty directory of
+ * CLAUDE.md from anywhere, no saved session, at most three turns, in an empty directory of
  * its own. The prompt goes in on stdin, the schema through `--json-schema`, and
  * the answer comes back as `structured_output`. The CLI owns authentication -
  * `claude setup-token`'s CLAUDE_CODE_OAUTH_TOKEN on a runner, or an existing
@@ -41,7 +41,11 @@ export interface ClaudeCodeResult {
 /** The subscription's 5-hour or weekly limit, or the account's usage cap: not worth a retry. */
 export class ClaudeLimitError extends Error {}
 
+/** The CLI is not signed in, or its token was rejected: not worth a retry either. */
+export class ClaudeAuthError extends Error {}
+
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const AUTH = /failed to authenticate|invalid bearer token|not logged in|please run \/login|invalid api key|oauth token (has )?expired|authentication_error/i;
 const LIMIT = /hit your (session|weekly|usage) limit|usage limit reached|rate limit reached|out of extra usage|limit (will )?resets?/i;
 
 /** The flags for one isolated, single-turn, tool-free call. Exported for tests. */
@@ -56,7 +60,11 @@ export function claudeArgs(req: Pick<ClaudeCodeRequest, 'model' | 'schema' | 'ef
     '--setting-sources', '',
     '--disable-slash-commands',
     '--no-session-persistence',
-    '--max-turns', '1',
+    // Three, not one: with --json-schema the answer arrives as a structured-output
+    // tool call, and a model that answers in prose first needs a second turn to be
+    // asked for it. One turn failed a live review with error_max_turns. With every
+    // tool disabled, a further turn can do nothing else.
+    '--max-turns', '3',
     ...(req.schema ? ['--json-schema', JSON.stringify(req.schema)] : []),
     ...(req.effort && EFFORTS.has(req.effort) ? ['--effort', req.effort] : []),
   ];
@@ -97,8 +105,9 @@ export function readReply(stdout: string, stderr: string, code: number | null): 
     // Only a failure is read for a limit: a review's own text can mention one.
     const said = `${typeof reply?.result === 'string' ? reply.result : ''} ${stderr} ${reply ? '' : stdout}`.trim();
     if (LIMIT.test(said)) throw new ClaudeLimitError(`Claude subscription limit: ${said.slice(0, 300)}`);
+    if (AUTH.test(said)) throw new ClaudeAuthError(`Claude Code is not signed in: ${said.slice(0, 300)}`);
     throw new Error(reply
-      ? `claude reported ${reply.subtype ?? 'an error'} (exit ${code}): ${said.slice(0, 300)}`
+      ? `claude failed (${reply.subtype ?? 'error'}, exit ${code}): ${said.slice(0, 300)}`
       : `claude exited ${code} without a JSON reply: ${said.slice(0, 300)}`);
   }
   const value = reply.structured_output !== undefined
