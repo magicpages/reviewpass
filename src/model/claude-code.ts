@@ -126,8 +126,11 @@ export async function claudeCodeCall(req: ClaudeCodeRequest): Promise<ClaudeCode
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
+    // Decoded as a stream: a character split across two chunks stays whole.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d: string) => { stdout += d; });
+    child.stderr.on('data', (d: string) => { stderr += d; });
     const timer = setTimeout(() => {
       // The CLI starts children of its own; take the whole group down.
       try { process.kill(-child.pid!, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
@@ -135,6 +138,10 @@ export async function claudeCodeCall(req: ClaudeCodeRequest): Promise<ClaudeCode
     const code = await new Promise<number | null>((resolve, reject) => {
       child.on('error', reject);
       child.on('close', resolve);
+      // A CLI that exits before reading the whole prompt - a limit, a missing
+      // login, the timeout - fails the write with EPIPE. Unhandled, that error
+      // would end the whole review; the exit code and output say what happened.
+      child.stdin.on('error', () => {});
       child.stdin.end(req.prompt);
     }).finally(() => clearTimeout(timer));
     if (code === null) throw new Error(`claude did not answer within ${Math.round(req.timeoutMs / 1000)}s`);

@@ -92,3 +92,35 @@ test('a review that could not run says why, in words the operator can act on', (
   assert.match(classifyBlocker(new Error('spawn claude ENOENT'))!.message, /not installed on this runner/);
   assert.match(classifyBlocker(new Error('claude exited 1 without a JSON reply: Invalid API key · Please run /login'))!.message, /CLAUDE_CODE_OAUTH_TOKEN/);
 });
+
+test('a CLI that exits without reading a large prompt fails the call instead of crashing the review', async () => {
+  const { claudeCodeCall } = await import('../src/model/claude-code.js');
+  const dir = mkdtempSync(join(tmpdir(), 'fake-claude-'));
+  const fake = join(dir, 'claude');
+  writeFileSync(fake, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ subtype: 'error_during_execution', is_error: true, result: 'Invalid API key \u00b7 Please run /login' }));
+process.exit(1);
+`);
+  chmodSync(fake, 0o755);
+  await assert.rejects(
+    claudeCodeCall({ model: 'sonnet', system: 's', prompt: 'x'.repeat(8_000_000), timeoutMs: 30_000, command: fake }),
+    /claude reported error_during_execution .*Please run \/login/,
+  );
+});
+
+test('output is decoded as UTF-8 across chunk boundaries', async () => {
+  const { claudeCodeCall } = await import('../src/model/claude-code.js');
+  const dir = mkdtempSync(join(tmpdir(), 'fake-claude-'));
+  const fake = join(dir, 'claude');
+  // Written one byte at a time, so every multibyte character is split.
+  writeFileSync(fake, `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', async () => {
+  const out = Buffer.from(JSON.stringify({ subtype: 'success', is_error: false, structured_output: { title: 'Prüfe die Größe — 日本' } }));
+  for (const b of out) { process.stdout.write(Buffer.from([b])); await new Promise((r) => setImmediate(r)); }
+});
+`);
+  chmodSync(fake, 0o755);
+  const r = await claudeCodeCall({ model: 'sonnet', system: 's', prompt: 'p', timeoutMs: 30_000, command: fake });
+  assert.equal(JSON.parse(r.value).title, 'Prüfe die Größe — 日本');
+});

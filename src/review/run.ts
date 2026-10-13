@@ -270,16 +270,7 @@ export async function findInChange(
   units: ReviewUnit[],
   sample: number,
 ): Promise<Finding[]> {
-  const numbered = (text: string) => text.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
-  const prompt = [
-    `# Pull request #${pr.number}: ${pr.title}`,
-    pr.body.trim() ? truncate(pr.body, 4_000) : '(no description)',
-    ...(pr.intent?.length ? ['## What this change was asked to do', ...pr.intent.map((i) => `### ${i.source}: ${i.title}\n${truncate(i.body, 4_000)}`)] : []),
-    '## Diff',
-    ...units.map((u) => `### ${u.path}\n\`\`\`diff\n${u.file.patch ?? ''}\n\`\`\``),
-    '## Changed files as they stand after the change, with line numbers',
-    ...units.map((u) => `### ${u.path}\n${u.fileText === undefined ? '(too large to include)' : `\`\`\`\n${numbered(u.fileText)}\n\`\`\``}`),
-  ].join('\n\n');
+  const prompt = wholeChangePrompt(pr, units, cfg.model.contextBudget * 4);
   const { value } = await model.json<{ findings: (RawFinding & { path: string })[] }>(
     [
       { role: 'system', content: 'Review this pull request as a whole. Report the real defects the change introduces, '
@@ -291,12 +282,17 @@ export async function findInChange(
     { schemaName: 'findings', maxTokens: cfg.model.maxTokens, temperature: cfg.model.temperature },
   );
   if (!Array.isArray(value?.findings)) throw new Error('model reply had no findings array');
+  const usable = value.findings.filter((r) => isUsable(r) && typeof (r as { path?: unknown }).path === 'string');
+  // A reply whose every finding lacks a file or lines ignored the schema; it is
+  // a failed pass, not a change with nothing wrong in it.
+  if (value.findings.length && !usable.length) {
+    throw new Error(`whole-change reply's ${value.findings.length} finding(s) had no file, line numbers, title or body`);
+  }
 
   const byPath = new Map(units.map((u) => [u.path, u]));
   const out: Finding[] = [];
   const seen = new Set<string>();
-  for (const r of value.findings) {
-    if (!isUsable(r) || typeof r.path !== 'string') continue;
+  for (const r of usable) {
     // A finding on a file the change did not touch cannot be anchored, and is
     // usually the model reaching past the change.
     const unit = byPath.get(r.path);
@@ -311,6 +307,32 @@ export async function findInChange(
     out.push(buildFinding(r, unit.path, start, end, fp, sample));
   }
   return out;
+}
+
+/**
+ * The whole change as one prompt, within `budget` characters. Each changed file
+ * gets an equal share for its diff and then its text, so a large early file
+ * cannot push every later one out of the request.
+ */
+export function wholeChangePrompt(pr: PullRequestContext, units: ReviewUnit[], budget: number): string {
+  const numbered = (text: string) => text.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
+  const head = [
+    `# Pull request #${pr.number}: ${pr.title}`,
+    pr.body.trim() ? truncate(pr.body, 4_000) : '(no description)',
+    ...(pr.intent?.length ? ['## What this change was asked to do', ...pr.intent.map((i) => `### ${i.source}: ${i.title}\n${truncate(i.body, 4_000)}`)] : []),
+  ].join('\n\n');
+  const share = Math.max(2_000, Math.floor((budget - head.length) / Math.max(1, units.length)));
+  const diffs = units.map((u) => {
+    const diff = truncate(u.file.patch ?? '', Math.floor(share / 2));
+    return { u, diff, room: share - diff.length };
+  });
+  return [
+    head,
+    '## Diff',
+    ...diffs.map(({ u, diff }) => `### ${u.path}\n\`\`\`diff\n${diff}\n\`\`\``),
+    '## Changed files as they stand after the change, with line numbers',
+    ...diffs.map(({ u, room }) => `### ${u.path}\n${u.fileText === undefined ? '(too large to include)' : `\`\`\`\n${truncate(numbered(u.fileText), Math.max(1_000, room))}\n\`\`\``}`),
+  ].join('\n\n');
 }
 
 /** The union of two findings' samples, sorted: merging duplicates keeps who found them. */

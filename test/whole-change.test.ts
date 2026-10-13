@@ -53,3 +53,35 @@ test('only findings on a changed file near a changed line survive, once each, as
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+test('a large early diff cannot push later files out of the whole-change prompt', async () => {
+  const { wholeChangePrompt } = await import('../src/review/run.js');
+  const big = unit('src/big.ts', [1]);
+  big.file.patch = `@@ -1 +1 @@\n${'+x\n'.repeat(200_000)}`;
+  big.fileText = 'y\n'.repeat(200_000);
+  const prompt = wholeChangePrompt(pr, [big, unit('src/late.ts', [1])], 120_000);
+  assert.ok(prompt.length < 130_000, `prompt is ${prompt.length} chars`);
+  assert.match(prompt, /### src\/late\.ts\n```diff\n@@ -1 \+1 @@\n\+changed src\/late\.ts/);
+  assert.match(prompt, /### src\/late\.ts\n```\n1: a/);
+});
+
+test('a reply whose findings all lack a file is a failed pass, not an empty review', async () => {
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      const { path: _omit, ...noPath } = raw('src/deploy.ts', 10, 'No file named');
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ findings: [noPath] }) } }], usage: {} }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address() as { port: number };
+  try {
+    const cfg = loadConfig(mkdtempSync(join(tmpdir(), 'reviewpass-cfg-')));
+    cfg.model.endpoint = `http://127.0.0.1:${port}/v1`;
+    cfg.model.endpoints = [cfg.model.endpoint];
+    await assert.rejects(findInChange(new ModelClient(cfg), cfg, pr, [unit('src/deploy.ts', [10])], 4), /had no file/);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
