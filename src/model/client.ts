@@ -1,5 +1,5 @@
 import { Agent, fetch as undiciFetch } from 'undici';
-import { claudeCodeCall, ClaudeLimitError, splitMessages } from './claude-code.js';
+import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages } from './claude-code.js';
 import { envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -138,8 +138,9 @@ export class ModelClient {
         return { value: r.value, reasoning: '', finishReason: r.stopReason ?? 'stop',
           promptTokens: r.promptTokens, completionTokens: r.completionTokens };
       } catch (err) {
-        // A limit or a missing CLI will not change in ten seconds.
-        if (err instanceof ClaudeLimitError || (err as NodeJS.ErrnoException).code === 'ENOENT') throw err;
+        // A limit, a rejected login or a missing CLI will not change in ten seconds.
+        if (err instanceof ClaudeLimitError || err instanceof ClaudeAuthError
+          || (err as NodeJS.ErrnoException).code === 'ENOENT') throw err;
         lastErr = err;
         if (attempt < 2) await sleep(5_000 * 3 ** attempt);
       }

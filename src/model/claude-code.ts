@@ -41,7 +41,11 @@ export interface ClaudeCodeResult {
 /** The subscription's 5-hour or weekly limit, or the account's usage cap: not worth a retry. */
 export class ClaudeLimitError extends Error {}
 
+/** The CLI is not signed in, or its token was rejected: not worth a retry either. */
+export class ClaudeAuthError extends Error {}
+
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const AUTH = /failed to authenticate|invalid bearer token|not logged in|please run \/login|invalid api key|oauth token (has )?expired|authentication_error/i;
 const LIMIT = /hit your (session|weekly|usage) limit|usage limit reached|rate limit reached|out of extra usage|limit (will )?resets?/i;
 
 /** The flags for one isolated, single-turn, tool-free call. Exported for tests. */
@@ -97,8 +101,9 @@ export function readReply(stdout: string, stderr: string, code: number | null): 
     // Only a failure is read for a limit: a review's own text can mention one.
     const said = `${typeof reply?.result === 'string' ? reply.result : ''} ${stderr} ${reply ? '' : stdout}`.trim();
     if (LIMIT.test(said)) throw new ClaudeLimitError(`Claude subscription limit: ${said.slice(0, 300)}`);
+    if (AUTH.test(said)) throw new ClaudeAuthError(`Claude Code is not signed in: ${said.slice(0, 300)}`);
     throw new Error(reply
-      ? `claude reported ${reply.subtype ?? 'an error'} (exit ${code}): ${said.slice(0, 300)}`
+      ? `claude failed (${reply.subtype ?? 'error'}, exit ${code}): ${said.slice(0, 300)}`
       : `claude exited ${code} without a JSON reply: ${said.slice(0, 300)}`);
   }
   const value = reply.structured_output !== undefined

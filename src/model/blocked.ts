@@ -56,7 +56,7 @@ export function classifyBlocker(err: unknown): Blocker | null {
   if (/spawn \S*claude\S* ENOENT/.test(text)) {
     return { message: 'The Claude Code CLI is not installed on this runner, so nothing was reviewed.' };
   }
-  if (/not logged in|please run \/login|invalid api key|OAuth token (has )?expired|authentication_error/i.test(text) && /claude/i.test(text)) {
+  if (/Claude Code is not signed in/.test(text)) {
     return { message: 'Claude Code is not signed in on this runner, so nothing was reviewed.'
       + ' Set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`.' };
   }
