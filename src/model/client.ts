@@ -1,4 +1,5 @@
 import { Agent, fetch as undiciFetch } from 'undici';
+import { claudeCodeCall, ClaudeLimitError, splitMessages } from './claude-code.js';
 import { envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -112,6 +113,40 @@ export class ModelClient {
     return url;
   }
 
+  /**
+   * One call through the Claude Code CLI on a subscription (see claude-code.ts).
+   * A subscription limit ends the call at once - waiting minutes for a 5-hour
+   * window to reset would hold the review open for nothing. Anything else gets
+   * two more tries, as an HTTP failure does.
+   */
+  private async viaClaudeCode(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
+    const { system, prompt } = splitMessages(messages);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await claudeCodeCall({
+          model: opts.model ?? this.cfg.model.name,
+          system,
+          prompt,
+          schema: opts.schema,
+          effort: opts.reasoningEffort ?? this.cfg.model.reasoningEffort,
+          timeoutMs: this.cfg.model.requestTimeoutMs,
+          command: envAny('CLAUDE_COMMAND'),
+        });
+        this.totalPrompt += r.promptTokens;
+        this.totalCompletion += r.completionTokens;
+        return { value: r.value, reasoning: '', finishReason: r.stopReason ?? 'stop',
+          promptTokens: r.promptTokens, completionTokens: r.completionTokens };
+      } catch (err) {
+        // A limit or a missing CLI will not change in ten seconds.
+        if (err instanceof ClaudeLimitError || (err as NodeJS.ErrnoException).code === 'ENOENT') throw err;
+        lastErr = err;
+        if (attempt < 2) await sleep(5_000 * 3 ** attempt);
+      }
+    }
+    throw new Error(`model unreachable after retries: ${String(lastErr)}`);
+  }
+
   get usage() {
     return { promptTokens: this.totalPrompt, completionTokens: this.totalCompletion };
   }
@@ -181,6 +216,7 @@ export class ModelClient {
   }
 
   private async raw(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
+    if (this.cfg.model.backend === 'claude-code') return this.viaClaudeCode(messages, opts);
     const body: Record<string, unknown> = {
       model: opts.model ?? this.cfg.model.name,
       messages,

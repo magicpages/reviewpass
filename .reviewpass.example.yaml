@@ -7,6 +7,17 @@ model:
   # llama.cpp / vLLM server. Set REVIEWPASS_API_KEY for the bearer token.
   endpoint: https://openrouter.ai/api/v1
 
+  # `claude-code` instead runs every call through the official Claude Code CLI on
+  # a Claude subscription (experimental): `name` and `verifyModel` become Claude
+  # models (sonnet, haiku, opus or a full id), the endpoint settings are unused,
+  # and calls count against the subscription's own usage limits. The CLI must be
+  # installed where the review runs, signed in or given CLAUDE_CODE_OAUTH_TOKEN
+  # from `claude setup-token`; REVIEWPASS_CLAUDE_COMMAND points at it when it is
+  # not on PATH. ANTHROPIC_API_KEY is removed from its environment, so the
+  # subscription is used rather than API billing. Each user runs it on their own
+  # subscription, under Anthropic's terms for it.
+  backend: openai
+
   # Finding and verifying are different jobs and want different models. The find
   # pass wants recall and runs several times per file, so it should be cheap.
   # The verify pass decides what a person actually sees, and a weak model here
