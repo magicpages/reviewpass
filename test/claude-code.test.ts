@@ -15,13 +15,14 @@ import { classifyBlocker } from '../src/model/blocked.js';
 
 afterEach(() => { for (const k of ['REVIEWPASS_BACKEND', 'REVIEWPASS_CLAUDE_COMMAND', 'ANTHROPIC_API_KEY']) delete process.env[k]; });
 
-test('a call is single-turn, tool-free and isolated, and never runs in bare mode', () => {
+test('a call is tool-free, isolated, short and never runs in bare mode', () => {
   const args = claudeArgs({ model: 'sonnet', schema: { type: 'object' }, effort: 'none' }, '/tmp/s.md');
   assert.ok(!args.includes('--bare'), 'bare mode accepts only an API key: the subscription would not be used');
   for (const flag of ['-p', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']) assert.ok(args.includes(flag), flag);
   assert.deepEqual(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2), ['--tools', '']);
   assert.deepEqual(args.slice(args.indexOf('--setting-sources'), args.indexOf('--setting-sources') + 2), ['--setting-sources', '']);
-  assert.deepEqual(args.slice(args.indexOf('--max-turns'), args.indexOf('--max-turns') + 2), ['--max-turns', '1']);
+  assert.deepEqual(args.slice(args.indexOf('--max-turns'), args.indexOf('--max-turns') + 2), ['--max-turns', '3'],
+    'room for the structured-output call when the model answers in prose first');
   assert.equal(args[args.indexOf('--json-schema') + 1], '{"type":"object"}');
   assert.ok(!args.includes('--effort'), '"none" is not a Claude Code effort level and is not sent');
   assert.equal(claudeArgs({ model: 'haiku', effort: 'low' }, '/tmp/s.md').at(-1), 'low');

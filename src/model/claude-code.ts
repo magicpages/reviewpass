@@ -2,7 +2,7 @@
  * Model calls through the official Claude Code CLI, on a Claude subscription.
  *
  * Each call is one `claude -p` process: no tools, no MCP servers, no settings or
- * CLAUDE.md from anywhere, no saved session, one turn, in an empty directory of
+ * CLAUDE.md from anywhere, no saved session, at most three turns, in an empty directory of
  * its own. The prompt goes in on stdin, the schema through `--json-schema`, and
  * the answer comes back as `structured_output`. The CLI owns authentication -
  * `claude setup-token`'s CLAUDE_CODE_OAUTH_TOKEN on a runner, or an existing
@@ -60,7 +60,11 @@ export function claudeArgs(req: Pick<ClaudeCodeRequest, 'model' | 'schema' | 'ef
     '--setting-sources', '',
     '--disable-slash-commands',
     '--no-session-persistence',
-    '--max-turns', '1',
+    // Three, not one: with --json-schema the answer arrives as a structured-output
+    // tool call, and a model that answers in prose first needs a second turn to be
+    // asked for it. One turn failed a live review with error_max_turns. With every
+    // tool disabled, a further turn can do nothing else.
+    '--max-turns', '3',
     ...(req.schema ? ['--json-schema', JSON.stringify(req.schema)] : []),
     ...(req.effort && EFFORTS.has(req.effort) ? ['--effort', req.effort] : []),
   ];
