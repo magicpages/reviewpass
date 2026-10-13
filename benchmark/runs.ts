@@ -30,6 +30,8 @@ export interface ModelSetting {
   verifyEffort?: Effort;
   /** Tells apart two runs of otherwise identical settings, e.g. before and after a change. */
   label?: string;
+  /** reviewpass only: `claude-code` runs every call through the Claude Code CLI on a subscription. */
+  backend?: ReviewpassConfig['model']['backend'];
   /** reviewpass only: review settings over the case repository's, e.g. `{ "findSamples": 6 }`. */
   review?: Partial<ReviewpassConfig['review']>;
 }
@@ -52,6 +54,7 @@ export function collidingKeys(keys: string[]): string[][] {
 /** Unchanged for settings without the newer fields, so earlier runs are still found. */
 export const methodKey = (kind: 'reviewpass' | 'raw', m: ModelSetting) =>
   `${kind}@${m.name}@${m.effort ?? 'default'}@${m.maxTokens}`
+  + (m.backend && m.backend !== 'openai' ? `+${m.backend}` : '')
   + (m.verifyName ? `+verify=${m.verifyName}` : '') + (m.verifyEffort ? `@${m.verifyEffort}` : '')
   + (m.review ? Object.entries(m.review).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([k, v]) => `+${k}=${String(v)}`).join('') : '')
   + (m.label ? `#${m.label}` : '');
@@ -135,6 +138,7 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       workspace: c.workspace, fullReview: true, dryRun: true, store,
       configOverrides: {
         endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
+        ...(m.backend ? { backend: m.backend } : {}),
         reasoningEffort: m.effort, verifyReasoningEffort: m.verifyEffort, maxTokens: m.maxTokens,
       },
       reviewOverrides: m.review,
@@ -208,6 +212,7 @@ export async function runRaw(c: Case, m: ModelSetting, run: number): Promise<Run
   cfg.model.endpoints = [m.endpoint];
   cfg.model.name = m.name;
   cfg.model.reasoningEffort = m.effort;
+  if (m.backend) cfg.model.backend = m.backend;
   const diff = execFileSync('git', ['-C', c.workspace, 'diff', '--no-renames', `${c.base}...${c.head}`],
     { encoding: 'utf8', maxBuffer: 1e9 });
   const paths = execFileSync('git', ['-C', c.workspace, 'diff', '--name-only', '--no-renames', `${c.base}...${c.head}`],

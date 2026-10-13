@@ -4,7 +4,7 @@ import type { ReviewpassConfig } from '../config/index.js';
 import { envAny } from '../config/index.js';
 import type { Finding, PullRequestContext, ReviewUnit, PreMergeCheck } from '../types.js';
 import {
-  FINDINGS_SCHEMA, VERDICT_SCHEMA, GROUP_VERDICT_SCHEMA, WALKTHROUGH_SCHEMA, CHECKS_SCHEMA, SEVERITIES, CATEGORIES,
+  FINDINGS_SCHEMA, WHOLE_CHANGE_SCHEMA, VERDICT_SCHEMA, GROUP_VERDICT_SCHEMA, WALKTHROUGH_SCHEMA, CHECKS_SCHEMA, SEVERITIES, CATEGORIES,
   type RawFinding,
 } from './schemas.js';
 import {
@@ -221,28 +221,118 @@ export async function findInFile(
       continue;
     }
 
-    const finding: Finding = {
-      path: unit.path,
-      startLine: start,
-      endLine: end,
-      severity: severityOf(r.severity),
-      category: categoryOf(r.category),
-      title: r.title.trim(),
-      body: r.body.trim(),
-      suggestion: r.suggestion?.trim() ? r.suggestion : undefined,
-      siblings: (r.siblings ?? [])
-        .filter((s) => s.path && s.path !== unit.path)
-        .map((s) => ({ path: s.path, startLine: s.start_line, endLine: s.end_line })),
-      settledBy: r.settled_by?.quote?.trim()
-        ? { path: r.settled_by.path, line: r.settled_by.line, quote: r.settled_by.quote }
-        : undefined,
-      fingerprint: fp,
-      samples: [sample],
-    };
+    const finding = buildFinding(r, unit.path, start, end, fp, sample);
     byFingerprint.set(fp, finding);
     out.push(finding);
   }
   return out;
+}
+
+function buildFinding(r: RawFinding, path: string, start: number, end: number, fp: string, sample: number): Finding {
+  return {
+    path,
+    startLine: start,
+    endLine: end,
+    severity: severityOf(r.severity),
+    category: categoryOf(r.category),
+    title: r.title.trim(),
+    body: r.body.trim(),
+    suggestion: r.suggestion?.trim() ? r.suggestion : undefined,
+    siblings: (r.siblings ?? [])
+      .filter((s) => s.path && s.path !== path)
+      .map((s) => ({ path: s.path, startLine: s.start_line, endLine: s.end_line })),
+    settledBy: r.settled_by?.quote?.trim()
+      ? { path: r.settled_by.path, line: r.settled_by.line, quote: r.settled_by.quote }
+      : undefined,
+    fingerprint: fp,
+    samples: [sample],
+  };
+}
+
+/**
+ * One pass over the whole change at once, beside the passes over each file.
+ *
+ * The file passes read one file at a time under the repository's rules and past
+ * corrections. A single plain call over the whole diff - the task, the diff and
+ * the changed files, nothing else - found defects they missed: a replica
+ * increase reported as converged, an alert claiming a refund before any was
+ * attempted. Added to the file passes on eight pull requests scored against what
+ * the maintainer fixed, it raised the real defects found by about a third,
+ * before verification. Its findings name their file, carry the same citation,
+ * and go through the same verification as every other.
+ *
+ * `sample` is the index it is recorded under, after the file passes.
+ */
+export async function findInChange(
+  model: ModelClient,
+  cfg: ReviewpassConfig,
+  pr: PullRequestContext,
+  units: ReviewUnit[],
+  sample: number,
+): Promise<Finding[]> {
+  const prompt = wholeChangePrompt(pr, units, cfg.model.contextBudget * 4);
+  const { value } = await model.json<{ findings: (RawFinding & { path: string })[] }>(
+    [
+      { role: 'system', content: 'Review this pull request as a whole. Report the real defects the change introduces, '
+        + 'including those that only show across files, each with the changed file and the lines it concerns in the new '
+        + 'version of that file.' },
+      { role: 'user', content: truncate(prompt, cfg.model.contextBudget * 4) },
+    ],
+    WHOLE_CHANGE_SCHEMA,
+    { schemaName: 'findings', maxTokens: cfg.model.maxTokens, temperature: cfg.model.temperature },
+  );
+  if (!Array.isArray(value?.findings)) throw new Error('model reply had no findings array');
+  const usable = value.findings.filter((r) => isUsable(r) && typeof (r as { path?: unknown }).path === 'string');
+  // A reply whose every finding lacks a file or lines ignored the schema; it is
+  // a failed pass, not a change with nothing wrong in it.
+  if (value.findings.length && !usable.length) {
+    throw new Error(`whole-change reply's ${value.findings.length} finding(s) had no file, line numbers, title or body`);
+  }
+
+  const byPath = new Map(units.map((u) => [u.path, u]));
+  const out: Finding[] = [];
+  const seen = new Set<string>();
+  for (const r of usable) {
+    // A finding on a file the change did not touch cannot be anchored, and is
+    // usually the model reaching past the change.
+    const unit = byPath.get(r.path);
+    if (!unit) continue;
+    const start = Math.min(r.start_line, r.end_line);
+    const end = Math.max(r.start_line, r.end_line);
+    if (!unit.file.addedLines.some((l) => l >= start - 3 && l <= end + 3)) continue;
+    if (cfg.review.profile === 'chill' && r.severity === 'trivial') continue;
+    const fp = fingerprint(unit.path, r.title, start);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push(buildFinding(r, unit.path, start, end, fp, sample));
+  }
+  return out;
+}
+
+/**
+ * The whole change as one prompt, within `budget` characters. Each changed file
+ * gets an equal share for its diff and then its text, so a large early file
+ * cannot push every later one out of the request.
+ */
+export function wholeChangePrompt(pr: PullRequestContext, units: ReviewUnit[], budget: number): string {
+  const numbered = (text: string) => text.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
+  const head = [
+    `# Pull request #${pr.number}: ${pr.title}`,
+    pr.body.trim() ? truncate(pr.body, 4_000) : '(no description)',
+    ...(pr.intent?.length ? ['## What this change was asked to do', ...pr.intent.map((i) => `### ${i.source}: ${i.title}\n${truncate(i.body, 4_000)}`)] : []),
+  ].join('\n\n');
+  const share = Math.max(2_000, Math.floor((budget - head.length) / Math.max(1, units.length)));
+  const diffs = units.map((u) => {
+    const diff = truncate(u.file.patch ?? '', Math.floor(share / 2));
+    return { u, diff, room: share - diff.length };
+  });
+  return [
+    head,
+    '## Diff',
+    ...diffs.map(({ u, diff }) => `### ${u.path}\n\`\`\`diff\n${diff}\n\`\`\``),
+    '## Changed files as they stand after the change, with line numbers',
+    ...diffs.map(({ u, room }) => `### ${u.path}\n${u.fileText === undefined ? '(too large to include)' : `\`\`\`\n${truncate(numbered(u.fileText), Math.max(1_000, room))}\n\`\`\``}`),
+  ].join('\n\n');
 }
 
 /** The union of two findings' samples, sorted: merging duplicates keeps who found them. */

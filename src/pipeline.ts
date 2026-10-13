@@ -19,7 +19,7 @@ import type { KnowledgeStore } from './store/knowledge.js';
 import { rerankOverChange } from './store/rerank.js';
 import { symbolsInPatch } from './context/retrieve.js';
 import {
-  findInFile, verify, rankAndCap, decideEvent, summarise, runChecks,
+  findInFile, findInChange, verify, rankAndCap, decideEvent, summarise, runChecks,
   collapseNearDuplicates, capPerRegion, citesMissingArtifact, redundantTestRequest, citationResolves, guardsImpossibleState,
   groupByRegion, verifyGroup, reconcileWithRefutations } from './review/run.js';
 import { renderWalkthrough, renderReviewSummary, renderProgressNotice } from './review/render.js';
@@ -523,6 +523,18 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
       return [] as Finding[];
     }
   })).flat();
+  if (cfg.review.wholeChangePass) {
+    // Recorded as the sample after the file passes, so agreement between
+    // samples still counts it as one more independent look.
+    try {
+      const whole = await findInChange(model, cfg, pr, units, Math.max(1, cfg.review.findSamples));
+      log.info(`  whole change: ${whole.length} candidate(s)`);
+      found.push(...whole);
+    } catch (err) {
+      // The file passes stand on their own; losing this one costs recall, not the review.
+      log.warn(`whole-change pass failed: ${String(err).slice(0, 200)}`);
+    }
+  }
   log.info(`Raised ${found.length} candidate findings`);
 
   const fresh = found.filter((f) => {

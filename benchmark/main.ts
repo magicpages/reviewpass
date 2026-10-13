@@ -27,7 +27,8 @@ interface RunConfig {
   /** Runs in flight at once, each its own process. */
   parallel: number;
   /** Variable holding the key the reviewed methods use. */
-  keyEnv: string;
+  /** The variable holding the key for the methods' endpoint. Not needed when every method runs on the claude-code backend. */
+  keyEnv?: string;
   /** Environment for the reviewed runs, e.g. REVIEWPASS_CONCURRENCY for an endpoint that rate-limits. */
   env?: Record<string, string>;
   methods: Method[];
@@ -66,7 +67,7 @@ function key(name: string): string {
 
 function worker(cfg: RunConfig, c: Case, kind: string, model: ModelSetting, run: number, out: string): Promise<void> {
   return spawnRun('npx', ['tsx', 'benchmark/worker.ts', cfg.cases, c.id, kind, JSON.stringify(model), String(run), out],
-    { ...process.env, ...cfg.env, REVIEWPASS_API_KEY: key(cfg.keyEnv) }, out,
+    { ...process.env, ...cfg.env, ...(cfg.keyEnv ? { REVIEWPASS_API_KEY: key(cfg.keyEnv) } : {}) }, out,
     (why) => ({ caseId: c.id, method: methodKey(kind === 'raw' ? 'raw' : 'reviewpass', model), run,
       findings: [], refuted: [], wallMs: 0, promptTokens: 0, completionTokens: 0, error: why }));
 }

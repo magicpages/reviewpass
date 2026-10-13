@@ -48,6 +48,18 @@ function keyShapeHint(): string {
 
 export function classifyBlocker(err: unknown): Blocker | null {
   const text = err instanceof Error ? err.message : String(err);
+
+  // The Claude Code backend: the subscription, the CLI and its login.
+  if (/Claude subscription limit/.test(text)) {
+    return { message: 'The Claude subscription\'s usage limit is reached, so nothing was reviewed. It resets on its own.' };
+  }
+  if (/spawn \S*claude\S* ENOENT/.test(text)) {
+    return { message: 'The Claude Code CLI is not installed on this runner, so nothing was reviewed.' };
+  }
+  if (/not logged in|please run \/login|invalid api key|OAuth token (has )?expired|authentication_error/i.test(text) && /claude/i.test(text)) {
+    return { message: 'Claude Code is not signed in on this runner, so nothing was reviewed.'
+      + ' Set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`.' };
+  }
   const status = /model (\d{3}):/.exec(text)?.[1];
 
   if (status === '402' || CREDITS.test(text)) {

@@ -73,6 +73,13 @@ export interface ReviewpassConfig {
      */
     contextRatio: number;
     requestTimeoutMs: number;
+    /**
+     * How model calls are made: `openai`, an OpenAI-compatible /chat/completions
+     * endpoint; or `claude-code`, the official Claude Code CLI on a Claude
+     * subscription, where `name` and `verifyModel` are Claude models (`sonnet`,
+     * `haiku`, `opus` or a full id) and the endpoint settings are not used.
+     */
+    backend: 'openai' | 'claude-code';
   };
   review: {
     profile: 'assertive' | 'chill';
@@ -85,6 +92,8 @@ export interface ReviewpassConfig {
     verify: boolean;
     /** How many times to sample the find pass and union the results. */
     findSamples: number;
+    /** One extra find pass over the whole change at once, beside the per-file passes. */
+    wholeChangePass: boolean;
     /**
      * Findings rated at or below this by the verifier are dropped as trivia.
      * The verifier rates 1-10 and refuses only what is untrue; volume is
@@ -175,6 +184,7 @@ const DEFAULTS: ReviewpassConfig = {
     contextBudget: 120_000,
     contextRatio: 3,
     requestTimeoutMs: 900_000,
+    backend: 'openai',
   },
   review: {
     profile: 'assertive',
@@ -198,6 +208,8 @@ const DEFAULTS: ReviewpassConfig = {
     // earns its place on its own: it found the Mongo-operator defect that no
     // other configuration in this benchmark ever found.
     findSamples: 4,
+    // Off until it is measured with verification in the loop; see findInChange.
+    wholeChangePass: false,
     // 1-2 is trivia by the rubric: restates the code, pure style, an assertion
     // that would pass either way. Everything above it is ranked, not gated -
     // a PR with eight genuine problems should be able to report eight.
@@ -326,6 +338,15 @@ function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
     : undefined;
 }
 
+/**
+ * A backend name, or a loud failure. Unlike an effort level, a mistyped backend
+ * cannot degrade: every call would go to the wrong place.
+ */
+function validBackend(v: unknown): ReviewpassConfig['model']['backend'] {
+  if (v === 'openai' || v === 'claude-code') return v;
+  throw new Error(`unknown model backend ${JSON.stringify(v)}: use "openai" or "claude-code"`);
+}
+
 export function loadConfig(root: string): ReviewpassConfig {
   // New names first, old ones still read so a repository that configured this
   // before the rename keeps working without being touched.
@@ -345,6 +366,7 @@ export function loadConfig(root: string): ReviewpassConfig {
     // would be forwarded verbatim and fail every call the reviewer makes.
     cfg.model.reasoningEffort = validEffort(cfg.model.reasoningEffort);
     cfg.model.verifyReasoningEffort = validEffort(cfg.model.verifyReasoningEffort);
+    cfg.model.backend = validBackend(cfg.model.backend);
     // Env always wins, so a workflow can point at a different box without a commit.
     return applyEnv(cfg);
   }
@@ -361,6 +383,8 @@ function applyEnv(cfg: ReviewpassConfig): ReviewpassConfig {
   const verifyModel = envAny('VERIFY_MODEL');
   const effort = envAny('REASONING_EFFORT');
   const verifyEffort = envAny('VERIFY_REASONING_EFFORT');
+  const backend = envAny('BACKEND');
+  if (backend) cfg.model.backend = validBackend(backend);
   if (endpoint) { cfg.model.endpoint = endpoint; cfg.model.endpoints = [endpoint]; }
   if (model) cfg.model.name = model;
   if (verifyModel) cfg.model.verifyModel = verifyModel;
