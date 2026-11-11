@@ -16,7 +16,7 @@
  * mark.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -47,13 +47,19 @@ export function defaultStatePath(env: NodeJS.ProcessEnv = process.env): string {
 
 export class ClaudeTokenPool {
   readonly tokens: PoolToken[];
+  /** This process's own marks, which hold even when the file cannot be written. */
+  private readonly local: State = {};
 
   constructor(tokens: string[], private readonly statePath: string, private readonly now: () => number = Date.now) {
     this.tokens = tokens.map((token) => ({ id: tokenId(token), token }));
   }
 
   private read(): State {
-    try { return JSON.parse(readFileSync(this.statePath, 'utf8')) as State; } catch { return {}; }
+    let file: State = {};
+    try { file = JSON.parse(readFileSync(this.statePath, 'utf8')) as State; } catch { /* no marks yet */ }
+    const out: State = { ...file };
+    for (const [id, mark] of Object.entries(this.local)) if ((out[id]?.until ?? 0) < mark.until) out[id] = mark;
+    return out;
   }
 
   /** The first token not set aside, or undefined when every one is. */
@@ -72,15 +78,22 @@ export class ClaudeTokenPool {
 
   /**
    * Set a token aside. Read, merged and replaced in one rename, so two reviews
-   * marking at once at worst lose one mark - which costs one refused call.
+   * marking at once at worst lose one mark - which costs one refused call. A
+   * file that cannot be written (read-only, disk full) only loses the sharing:
+   * the mark still holds in this process.
    */
   setAside(id: string, kind: keyof typeof COOLDOWN): void {
+    this.local[id] = { until: this.now() + COOLDOWN[kind], why: kind };
     const state = this.read();
-    state[id] = { until: this.now() + COOLDOWN[kind], why: kind };
-    mkdirSync(dirname(this.statePath), { recursive: true });
     const tmp = `${this.statePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
-    renameSync(tmp, this.statePath);
+    try {
+      mkdirSync(dirname(this.statePath), { recursive: true });
+      writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
+      renameSync(tmp, this.statePath);
+    } catch (err) {
+      try { rmSync(tmp, { force: true }); } catch { /* the directory itself is the problem */ }
+      console.error(`  claude token state not saved to ${this.statePath} (${(err as Error).message}); other reviews will not skip token ${id}`);
+    }
   }
 }
 

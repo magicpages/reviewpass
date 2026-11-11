@@ -78,8 +78,10 @@ export function claudeEnv(env: NodeJS.ProcessEnv, token?: string): NodeJS.Proces
   const out = { ...env };
   delete out.ANTHROPIC_API_KEY;
   delete out.ANTHROPIC_AUTH_TOKEN;
-  // The pool's list never reaches the CLI; only the one token this call uses.
+  // The pool's list never reaches the CLI, under either name; only the one
+  // token this call uses.
   delete out.REVIEWPASS_CLAUDE_TOKENS;
+  delete out.WARREN_CLAUDE_TOKENS;
   if (token) out.CLAUDE_CODE_OAUTH_TOKEN = token;
   return out;
 }

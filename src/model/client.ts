@@ -114,12 +114,6 @@ export class ModelClient {
     return url;
   }
 
-  /**
-   * One call through the Claude Code CLI on a subscription (see claude-code.ts).
-   * A subscription limit ends the call at once - waiting minutes for a 5-hour
-   * window to reset would hold the review open for nothing. Anything else gets
-   * two more tries, as an HTTP failure does.
-   */
   /** Set when REVIEWPASS_CLAUDE_TOKENS names tokens; otherwise the CLI's own sign-in is used. */
   private tokenPool?: ClaudeTokenPool | null;
 
@@ -162,6 +156,12 @@ export class ModelClient {
     }
   }
 
+  /**
+   * One call through the Claude Code CLI on a subscription (see claude-code.ts).
+   * A subscription limit ends the call at once - waiting minutes for a 5-hour
+   * window to reset would hold the review open for nothing. Anything else gets
+   * two more tries, as an HTTP failure does.
+   */
   private async viaClaudeCode(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
     const { system, prompt } = splitMessages(messages);
     let lastErr: unknown;

@@ -35,14 +35,22 @@ test('the first token not set aside is used, and a mark outlives the pool that m
   assert.doesNotMatch(readFileSync(path, 'utf8'), /tok-/, 'no token is written, only its hash');
 });
 
+test('a state file that cannot be written still sets the token aside in this process', () => {
+  const blocker = join(mkdtempSync(join(tmpdir(), 'claude-tokens-')), 'a-file');
+  writeFileSync(blocker, '');
+  const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], join(blocker, 'state.json'));
+  pool.setAside(tokenId('tok-a'), 'weekly');
+  assert.equal(pool.pick()!.token, 'tok-b');
+});
+
 test('a weekly limit parks a token longer than a session limit', () => {
   assert.equal(limitKind("You've hit your weekly limit · resets Oct 27"), 'weekly');
   assert.equal(limitKind("You've hit your session limit · resets 11pm"), 'session');
   assert.ok(COOLDOWN.weekly > COOLDOWN.session);
 });
 
-test('the CLI gets the one token for its call, never the list', () => {
-  const env = claudeEnv({ REVIEWPASS_CLAUDE_TOKENS: 'a,b', CLAUDE_CODE_OAUTH_TOKEN: 'old', PATH: '/bin' }, 'b');
+test('the CLI gets the one token for its call, never the list under either name', () => {
+  const env = claudeEnv({ REVIEWPASS_CLAUDE_TOKENS: 'a,b', WARREN_CLAUDE_TOKENS: 'a,b', CLAUDE_CODE_OAUTH_TOKEN: 'old', PATH: '/bin' }, 'b');
   assert.deepEqual(env, { CLAUDE_CODE_OAUTH_TOKEN: 'b', PATH: '/bin' });
 });
 
