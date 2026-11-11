@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ClaudeTokenPool, COOLDOWN, limitKind, parseTokens, tokenId } from '../src/model/claude-tokens.js';
+import { ClaudeTokenPool, COOLDOWN, parseTokens, tokenId } from '../src/model/claude-tokens.js';
 import { claudeEnv, ClaudeLimitError } from '../src/model/claude-code.js';
 import { ModelClient } from '../src/model/client.js';
 import { loadConfig } from '../src/config/index.js';
@@ -26,11 +26,11 @@ test('the first token not set aside is used, and a mark outlives the pool that m
   const path = state();
   const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], path, () => now);
   assert.equal(pool.pick()!.token, 'tok-a');
-  pool.setAside(tokenId('tok-a'), 'session');
+  pool.setAside(tokenId('tok-a'), 'limit');
   const other = new ClaudeTokenPool(['tok-a', 'tok-b'], path, () => now);
   assert.equal(other.pick()!.token, 'tok-b', 'another review on the machine skips the spent token');
-  assert.equal(other.nextFree(), 1_000 + COOLDOWN.session);
-  now += COOLDOWN.session;
+  assert.equal(other.nextFree(), 1_000 + COOLDOWN.limit);
+  now += COOLDOWN.limit;
   assert.equal(other.pick()!.token, 'tok-a', 'it comes back when its time is up');
   assert.doesNotMatch(readFileSync(path, 'utf8'), /tok-/, 'no token is written, only its hash');
 });
@@ -39,14 +39,16 @@ test('a state file that cannot be written still sets the token aside in this pro
   const blocker = join(mkdtempSync(join(tmpdir(), 'claude-tokens-')), 'a-file');
   writeFileSync(blocker, '');
   const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], join(blocker, 'state.json'));
-  pool.setAside(tokenId('tok-a'), 'weekly');
+  pool.setAside(tokenId('tok-a'), 'limit');
   assert.equal(pool.pick()!.token, 'tok-b');
 });
 
-test('a weekly limit parks a token longer than a session limit', () => {
-  assert.equal(limitKind("You've hit your weekly limit · resets Oct 27"), 'weekly');
-  assert.equal(limitKind("You've hit your session limit · resets 11pm"), 'session');
-  assert.ok(COOLDOWN.weekly > COOLDOWN.session);
+test('a token at its weekly limit is tried again within the hour, so an early reset is not missed', () => {
+  let now = 0;
+  const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], state(), () => now);
+  pool.setAside(tokenId('tok-a'), 'limit');
+  now += 60 * 60_000;
+  assert.equal(pool.pick()!.token, 'tok-a');
 });
 
 test('the CLI gets the one token for its call, never the list under either name', () => {

@@ -10,10 +10,11 @@
  * token is written to the file or to a log.
  *
  * How long a token is set aside is a guess on purpose. The CLI says when a limit
- * resets in a local wall-clock phrase ("resets 11pm (Europe/Vienna)"); rather
- * than parse that, a session limit parks the token for an hour and a weekly one
- * for twelve. A guess that is too short costs one quick refused call and a fresh
- * mark.
+ * resets in a local wall-clock phrase ("resets 6pm (Europe/Vienna)"); rather
+ * than parse that, any limit parks the token for an hour. A weekly limit can
+ * reset at any hour of its last day, so a longer guess would keep a token idle
+ * long after it is back; one that is too short costs one quick refused call and
+ * a fresh mark.
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,7 +24,7 @@ import { dirname, join } from 'node:path';
 const HOUR = 3_600_000;
 
 /** How long a token is set aside after each kind of refusal. */
-export const COOLDOWN = { session: HOUR, weekly: 12 * HOUR, auth: 6 * HOUR } as const;
+export const COOLDOWN = { limit: HOUR, auth: 6 * HOUR } as const;
 
 type State = Record<string, { until: number; why: string }>;
 
@@ -96,6 +97,3 @@ export class ClaudeTokenPool {
     }
   }
 }
-
-/** Which limit a refusal names: the weekly one parks a token far longer. */
-export const limitKind = (message: string): 'session' | 'weekly' => (/weekly/i.test(message) ? 'weekly' : 'session');
