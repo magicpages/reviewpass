@@ -6,7 +6,8 @@
  * its own. The prompt goes in on stdin, the schema through `--json-schema`, and
  * the answer comes back as `structured_output`. The CLI owns authentication -
  * `claude setup-token`'s CLAUDE_CODE_OAUTH_TOKEN on a runner, or an existing
- * login - and this module never reads a credential.
+ * login - and this module reads no credential file; a token pool
+ * (claude-tokens.ts) may hand a call the token it should use.
  *
  * Two things would quietly move the bill from the subscription to API credit,
  * and both are ruled out here: `--bare`, which accepts only an API key, is never
@@ -29,6 +30,8 @@ export interface ClaudeCodeRequest {
   timeoutMs: number;
   /** The CLI to run; `claude` on PATH by default. */
   command?: string;
+  /** A subscription token for this call, over any CLAUDE_CODE_OAUTH_TOKEN in the environment. */
+  token?: string;
 }
 
 export interface ClaudeCodeResult {
@@ -71,10 +74,15 @@ export function claudeArgs(req: Pick<ClaudeCodeRequest, 'model' | 'schema' | 'ef
 }
 
 /** The environment the CLI runs in: everything but a key that would bill the API instead. */
-export function claudeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function claudeEnv(env: NodeJS.ProcessEnv, token?: string): NodeJS.ProcessEnv {
   const out = { ...env };
   delete out.ANTHROPIC_API_KEY;
   delete out.ANTHROPIC_AUTH_TOKEN;
+  // The pool's list never reaches the CLI, under either name; only the one
+  // token this call uses.
+  delete out.REVIEWPASS_CLAUDE_TOKENS;
+  delete out.WARREN_CLAUDE_TOKENS;
+  if (token) out.CLAUDE_CODE_OAUTH_TOKEN = token;
   return out;
 }
 
@@ -131,7 +139,7 @@ export async function claudeCodeCall(req: ClaudeCodeRequest): Promise<ClaudeCode
     const systemFile = join(dir, 'system.md');
     writeFileSync(systemFile, req.system || 'You are a careful code reviewer.');
     const child = spawn(req.command ?? 'claude', claudeArgs(req, systemFile), {
-      cwd: dir, env: claudeEnv(process.env), stdio: ['pipe', 'pipe', 'pipe'], detached: true,
+      cwd: dir, env: claudeEnv(process.env, req.token), stdio: ['pipe', 'pipe', 'pipe'], detached: true,
     });
     let stdout = '';
     let stderr = '';

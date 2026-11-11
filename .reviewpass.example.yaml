@@ -15,7 +15,11 @@ model:
   # from `claude setup-token`; REVIEWPASS_CLAUDE_COMMAND points at it when it is
   # not on PATH. ANTHROPIC_API_KEY is removed from its environment, so the
   # subscription is used rather than API billing. Each user runs it on their own
-  # subscription, under Anthropic's terms for it.
+  # subscription, under Anthropic's terms for it. REVIEWPASS_CLAUDE_TOKENS (one
+  # token per line or comma-separated) gives several: the first is used until it
+  # hits a limit, is then set aside for a while, and calls move to the next; the
+  # marks are shared through a state file (REVIEWPASS_CLAUDE_TOKEN_STATE, default
+  # ~/.local/state/reviewpass/claude-tokens.json) holding token hashes only.
   backend: openai
 
   # Finding and verifying are different jobs and want different models. The find

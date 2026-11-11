@@ -1,5 +1,6 @@
 import { Agent, fetch as undiciFetch } from 'undici';
-import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages } from './claude-code.js';
+import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages, type ClaudeCodeResult } from './claude-code.js';
+import { ClaudeTokenPool, defaultStatePath, limitKind, parseTokens } from './claude-tokens.js';
 import { envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -113,6 +114,48 @@ export class ModelClient {
     return url;
   }
 
+  /** Set when REVIEWPASS_CLAUDE_TOKENS names tokens; otherwise the CLI's own sign-in is used. */
+  private tokenPool?: ClaudeTokenPool | null;
+
+  private get pool(): ClaudeTokenPool | null {
+    if (this.tokenPool === undefined) {
+      const tokens = parseTokens(envAny('CLAUDE_TOKENS'));
+      this.tokenPool = tokens.length
+        ? new ClaudeTokenPool(tokens, envAny('CLAUDE_TOKEN_STATE') ?? defaultStatePath())
+        : null;
+    }
+    return this.tokenPool;
+  }
+
+  /**
+   * One call on the token pool: the first token not set aside. A token at its
+   * limit, or one the subscription rejects, is set aside and the call moves to
+   * the next - without spending one of the call's own tries. When none is left,
+   * the limit error stands.
+   */
+  private async onPool(call: (token?: string) => Promise<ClaudeCodeResult>): Promise<ClaudeCodeResult> {
+    const pool = this.pool;
+    if (!pool) return call();
+    const tried = new Set<string>();
+    for (;;) {
+      const t = pool.pick(tried);
+      if (!t) {
+        const next = pool.nextFree();
+        throw new ClaudeLimitError(`Claude subscription limit: all ${pool.tokens.length} tokens are at their limit`
+          + (next ? `; the first is due back around ${new Date(next).toISOString().slice(11, 16)} UTC` : ''));
+      }
+      tried.add(t.id);
+      try {
+        return await call(t.token);
+      } catch (err) {
+        if (err instanceof ClaudeLimitError) pool.setAside(t.id, limitKind(err.message));
+        else if (err instanceof ClaudeAuthError) pool.setAside(t.id, 'auth');
+        else throw err;
+        console.error(`  claude token ${t.id} set aside (${err.message.slice(0, 80)}); trying the next`);
+      }
+    }
+  }
+
   /**
    * One call through the Claude Code CLI on a subscription (see claude-code.ts).
    * A subscription limit ends the call at once - waiting minutes for a 5-hour
@@ -124,7 +167,7 @@ export class ModelClient {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await claudeCodeCall({
+        const r = await this.onPool((token) => claudeCodeCall({
           model: opts.model ?? this.cfg.model.name,
           system,
           prompt,
@@ -132,7 +175,8 @@ export class ModelClient {
           effort: opts.reasoningEffort ?? this.cfg.model.reasoningEffort,
           timeoutMs: this.cfg.model.requestTimeoutMs,
           command: envAny('CLAUDE_COMMAND'),
-        });
+          token,
+        }));
         this.totalPrompt += r.promptTokens;
         this.totalCompletion += r.completionTokens;
         return { value: r.value, reasoning: '', finishReason: r.stopReason ?? 'stop',
