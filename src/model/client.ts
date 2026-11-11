@@ -1,6 +1,6 @@
 import { Agent, fetch as undiciFetch } from 'undici';
 import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages, type ClaudeCodeResult } from './claude-code.js';
-import { ClaudeTokenPool, defaultStatePath, limitKind, parseTokens } from './claude-tokens.js';
+import { ClaudeTokenPool, defaultStatePath, parseTokens } from './claude-tokens.js';
 import { envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -148,7 +148,7 @@ export class ModelClient {
       try {
         return await call(t.token);
       } catch (err) {
-        if (err instanceof ClaudeLimitError) pool.setAside(t.id, limitKind(err.message));
+        if (err instanceof ClaudeLimitError) pool.setAside(t.id, 'limit');
         else if (err instanceof ClaudeAuthError) pool.setAside(t.id, 'auth');
         else throw err;
         console.error(`  claude token ${t.id} set aside (${err.message.slice(0, 80)}); trying the next`);
