@@ -30,12 +30,12 @@ const RESET_MARGIN = 60_000;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-/** A wall-clock date in `tz`, from an instant. */
-function wallDate(instant: number, tz: string): { y: number; m: number; d: number; wd: number } {
+/** Today's wall-clock date in `tz`. */
+function wallDate(instant: number, tz: string): { y: number; m: number; d: number } {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric',
   }).formatToParts(instant).map((p) => [p.type, p.value]));
-  return { y: +parts.year!, m: +parts.month! - 1, d: +parts.day!, wd: WEEKDAYS.indexOf(parts.weekday!.toLowerCase()) };
+  return { y: +parts.year!, m: +parts.month! - 1, d: +parts.day! };
 }
 
 /** The instant a wall-clock time in `tz` happens; checked twice for a DST change in between. */
@@ -66,11 +66,14 @@ export function resetAt(message: string, now: number): number | undefined {
   if (word && month < 0 && weekday < 0) return undefined;
   const h = (+hour! % 12) + (ampm!.toLowerCase() === 'pm' ? 12 : 0);
   try {
+    const today = wallDate(now, tz!);
+    // Calendar days, not 24-hour steps: a DST change would skip or repeat one.
     for (let i = 0; i <= 7; i++) {
-      const w = wallDate(now + i * 24 * HOUR, tz!);
-      if (month >= 0 && (w.m !== month || w.d !== +day!)) continue;
-      if (weekday >= 0 && w.wd !== weekday) continue;
-      const at = zoned(w.y, w.m, w.d, h, +(minute ?? 0), tz!);
+      const date = new Date(Date.UTC(today.y, today.m, today.d + i));
+      const [y, mo, d] = [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()];
+      if (month >= 0 && (mo !== month || d !== +day!)) continue;
+      if (weekday >= 0 && date.getUTCDay() !== weekday) continue;
+      const at = zoned(y, mo, d, h, +(minute ?? 0), tz!);
       if (at > now) return at;
     }
   } catch { /* an unknown time zone */ }

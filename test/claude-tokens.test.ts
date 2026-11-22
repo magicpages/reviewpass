@@ -61,6 +61,8 @@ test('reset phrases: later today, tomorrow, a named day, a summer offset, and on
   assert.equal(resetAt('resets Fri 12am (Europe/Vienna)', now), Date.UTC(2026, 10, 26, 23, 0));
   assert.equal(resetAt('resets Nov 25, 6pm (Europe/Vienna)', now), Date.UTC(2026, 10, 25, 17, 0));
   assert.equal(resetAt('resets 4pm (Europe/Vienna)', Date.UTC(2026, 6, 1, 10, 0)), Date.UTC(2026, 6, 1, 14, 0), 'CEST is UTC+2');
+  // 23:30 CET on Mar 28; 24 hours later is already 00:30 CEST on Mar 30.
+  assert.equal(resetAt('resets 4pm (Europe/Vienna)', Date.UTC(2026, 2, 28, 22, 30)), Date.UTC(2026, 2, 29, 14, 0), 'the night the clocks go forward');
   assert.equal(resetAt('resets 4pm (Mars/Olympus)', now), undefined);
   assert.equal(resetAt('resets 4pm', now), undefined);
   assert.equal(resetAt("You've hit your weekly limit · resets Oct 27", now), undefined);
