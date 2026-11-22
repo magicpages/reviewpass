@@ -9,12 +9,10 @@
  * finding out with a failed call. Tokens are known by a short hash only: no
  * token is written to the file or to a log.
  *
- * How long a token is set aside is a guess on purpose. The CLI says when a limit
- * resets in a local wall-clock phrase ("resets 6pm (Europe/Vienna)"); rather
- * than parse that, any limit parks the token for an hour. A weekly limit can
- * reset at any hour of its last day, so a longer guess would keep a token idle
- * long after it is back; one that is too short costs one quick refused call and
- * a fresh mark.
+ * A token at its limit is set aside until the reset the CLI names, in a local
+ * wall-clock phrase ("resets 4pm (Europe/Vienna)"), plus a minute. A phrase it
+ * cannot place parks the token for an hour: too long a guess keeps a token idle
+ * after it is back, too short a one costs one quick refused call and a new mark.
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,8 +21,61 @@ import { dirname, join } from 'node:path';
 
 const HOUR = 3_600_000;
 
-/** How long a token is set aside after each kind of refusal. */
+/** How long a token is set aside when the refusal names no reset time. */
 export const COOLDOWN = { limit: HOUR, auth: 6 * HOUR } as const;
+
+/** After a named reset, so a call does not race the subscription's own clock. */
+const RESET_MARGIN = 60_000;
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** A wall-clock date in `tz`, from an instant. */
+function wallDate(instant: number, tz: string): { y: number; m: number; d: number; wd: number } {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+  }).formatToParts(instant).map((p) => [p.type, p.value]));
+  return { y: +parts.year!, m: +parts.month! - 1, d: +parts.day!, wd: WEEKDAYS.indexOf(parts.weekday!.toLowerCase()) };
+}
+
+/** The instant a wall-clock time in `tz` happens; checked twice for a DST change in between. */
+function zoned(y: number, m: number, d: number, h: number, min: number, tz: string): number {
+  const want = Date.UTC(y, m, d, h, min);
+  let t = want;
+  for (let i = 0; i < 2; i++) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
+    }).formatToParts(t).map((x) => [x.type, x.value]));
+    t += want - Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour!, +p.minute!);
+  }
+  return t;
+}
+
+/**
+ * When a limit named in a CLI refusal resets: "resets 4pm (Europe/Vienna)",
+ * "resets 6:30am (UTC)", optionally after a day ("resets Nov 28, 6pm (…)",
+ * "resets Fri 12am (…)"). The next such moment within a week, or undefined when
+ * the phrase is missing or names no zone this runtime knows.
+ */
+export function resetAt(message: string, now: number): number | undefined {
+  const m = /resets\s+(?:([a-z]{3})[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)\s]+)\)/i.exec(message);
+  if (!m) return undefined;
+  const [, word, day, hour, minute, ampm, tz] = m;
+  const month = word && day ? MONTHS.indexOf(word.toLowerCase()) : -1;
+  const weekday = word && !day ? WEEKDAYS.indexOf(word.toLowerCase()) : -1;
+  if (word && month < 0 && weekday < 0) return undefined;
+  const h = (+hour! % 12) + (ampm!.toLowerCase() === 'pm' ? 12 : 0);
+  try {
+    for (let i = 0; i <= 7; i++) {
+      const w = wallDate(now + i * 24 * HOUR, tz!);
+      if (month >= 0 && (w.m !== month || w.d !== +day!)) continue;
+      if (weekday >= 0 && w.wd !== weekday) continue;
+      const at = zoned(w.y, w.m, w.d, h, +(minute ?? 0), tz!);
+      if (at > now) return at;
+    }
+  } catch { /* an unknown time zone */ }
+  return undefined;
+}
 
 type State = Record<string, { until: number; why: string }>;
 
@@ -78,13 +129,16 @@ export class ClaudeTokenPool {
   }
 
   /**
-   * Set a token aside. Read, merged and replaced in one rename, so two reviews
-   * marking at once at worst lose one mark - which costs one refused call. A
-   * file that cannot be written (read-only, disk full) only loses the sharing:
-   * the mark still holds in this process.
+   * Set a token aside: until the reset `message` names, or for its kind's
+   * cooldown. Read, merged and replaced in one rename, so two reviews marking at
+   * once at worst lose one mark - which costs one refused call. A file that
+   * cannot be written (read-only, disk full) only loses the sharing: the mark
+   * still holds in this process.
    */
-  setAside(id: string, kind: keyof typeof COOLDOWN): void {
-    this.local[id] = { until: this.now() + COOLDOWN[kind], why: kind };
+  setAside(id: string, kind: keyof typeof COOLDOWN, message = ''): void {
+    const now = this.now();
+    const reset = kind === 'limit' ? resetAt(message, now) : undefined;
+    this.local[id] = { until: reset !== undefined ? reset + RESET_MARGIN : now + COOLDOWN[kind], why: kind };
     const state = this.read();
     const tmp = `${this.statePath}.${process.pid}.tmp`;
     try {

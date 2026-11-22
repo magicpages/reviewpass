@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ClaudeTokenPool, COOLDOWN, parseTokens, tokenId } from '../src/model/claude-tokens.js';
+import { ClaudeTokenPool, COOLDOWN, parseTokens, resetAt, tokenId } from '../src/model/claude-tokens.js';
 import { claudeEnv, ClaudeLimitError } from '../src/model/claude-code.js';
 import { ModelClient } from '../src/model/client.js';
 import { loadConfig } from '../src/config/index.js';
@@ -43,11 +43,34 @@ test('a state file that cannot be written still sets the token aside in this pro
   assert.equal(pool.pick()!.token, 'tok-b');
 });
 
-test('a token at its weekly limit is tried again within the hour, so an early reset is not missed', () => {
+test('a token at its limit comes back when the reset the CLI names has passed', () => {
+  // 2026-11-22 14:46:28 UTC = 15:46 in Vienna (CET); "4pm" there is 15:00 UTC.
+  let now = Date.UTC(2026, 10, 22, 14, 46, 28);
+  const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], state(), () => now);
+  pool.setAside(tokenId('tok-a'), 'limit', "Claude subscription limit: You've hit your session limit · resets 4pm (Europe/Vienna)");
+  assert.equal(pool.pick()!.token, 'tok-b');
+  now = Date.UTC(2026, 10, 22, 15, 1, 1);
+  assert.equal(pool.pick()!.token, 'tok-a', 'back a minute after 15:00 UTC, not an hour after the refusal');
+});
+
+test('reset phrases: later today, tomorrow, a named day, a summer offset, and ones that cannot be placed', () => {
+  const now = Date.UTC(2026, 10, 22, 14, 46); // Sunday, 15:46 in Vienna
+  assert.equal(resetAt("You've hit your weekly limit · resets 6pm (Europe/Vienna)", now), Date.UTC(2026, 10, 22, 17, 0));
+  assert.equal(resetAt('resets 11:30am (Europe/Vienna)', now), Date.UTC(2026, 10, 23, 10, 30), 'a time already past today is tomorrow');
+  assert.equal(resetAt('resets 12am (Europe/Vienna)', now), Date.UTC(2026, 10, 22, 23, 0), 'midnight');
+  assert.equal(resetAt('resets Fri 12am (Europe/Vienna)', now), Date.UTC(2026, 10, 26, 23, 0));
+  assert.equal(resetAt('resets Nov 25, 6pm (Europe/Vienna)', now), Date.UTC(2026, 10, 25, 17, 0));
+  assert.equal(resetAt('resets 4pm (Europe/Vienna)', Date.UTC(2026, 6, 1, 10, 0)), Date.UTC(2026, 6, 1, 14, 0), 'CEST is UTC+2');
+  assert.equal(resetAt('resets 4pm (Mars/Olympus)', now), undefined);
+  assert.equal(resetAt('resets 4pm', now), undefined);
+  assert.equal(resetAt("You've hit your weekly limit · resets Oct 27", now), undefined);
+});
+
+test('a refusal naming no reset parks the token for the fallback hour', () => {
   let now = 0;
   const pool = new ClaudeTokenPool(['tok-a', 'tok-b'], state(), () => now);
-  pool.setAside(tokenId('tok-a'), 'limit');
-  now += 60 * 60_000;
+  pool.setAside(tokenId('tok-a'), 'limit', 'usage limit reached');
+  now += COOLDOWN.limit;
   assert.equal(pool.pick()!.token, 'tok-a');
 });
 

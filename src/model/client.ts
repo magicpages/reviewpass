@@ -148,7 +148,7 @@ export class ModelClient {
       try {
         return await call(t.token);
       } catch (err) {
-        if (err instanceof ClaudeLimitError) pool.setAside(t.id, 'limit');
+        if (err instanceof ClaudeLimitError) pool.setAside(t.id, 'limit', err.message);
         else if (err instanceof ClaudeAuthError) pool.setAside(t.id, 'auth');
         else throw err;
         console.error(`  claude token ${t.id} set aside (${err.message.slice(0, 80)}); trying the next`);
