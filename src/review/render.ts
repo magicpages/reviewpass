@@ -220,6 +220,13 @@ export function renderReviewSummary(r: ReviewResult, unanchored: Finding[]): str
     }
   }
 
+  // The findings above came from a different model than the one configured, so
+  // a reader comparing this review with the last should know why it reads
+  // differently.
+  if (r.fallbackModel && !r.blocked) {
+    out.push('', `_Claude was at its usage limit, so \`${r.fallbackModel}\` reviewed all or part of this change._`);
+  }
+
   if (unanchored.length) {
     out.push(
       '',

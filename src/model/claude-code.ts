@@ -82,6 +82,9 @@ export function claudeEnv(env: NodeJS.ProcessEnv, token?: string): NodeJS.Proces
   // token this call uses.
   delete out.REVIEWPASS_CLAUDE_TOKENS;
   delete out.WARREN_CLAUDE_TOKENS;
+  // Nor does the fallback's key, which the CLI has no use for.
+  delete out.REVIEWPASS_FALLBACK_API_KEY;
+  delete out.WARREN_FALLBACK_API_KEY;
   if (token) out.CLAUDE_CODE_OAUTH_TOKEN = token;
   return out;
 }

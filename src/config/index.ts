@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
@@ -307,6 +307,39 @@ function merge<T>(base: T, over: unknown): T {
 export const envAny = (suffix: string): string | undefined =>
   process.env[`REVIEWPASS_${suffix}`] ?? process.env[`WARREN_${suffix}`];
 
+let keyFromFd: string | undefined;
+
+/**
+ * Take the API key from the file descriptor `REVIEWPASS_API_KEY_FD` names.
+ *
+ * For a wrapper that must not put the key in the environment: every process
+ * this one starts (git, gh, rg, the Claude CLI, an intent command) inherits the
+ * environment, so a key there reaches all of them. Run before anything is
+ * spawned. The descriptor is closed after reading, since an open one is
+ * inherited the same way, and the variable is removed.
+ */
+export function loadApiKeyFromFd(): void {
+  const raw = process.env.REVIEWPASS_API_KEY_FD;
+  if (raw === undefined) return;
+  delete process.env.REVIEWPASS_API_KEY_FD;
+  const fd = Number(raw);
+  // 0-2 are stdio; reading stdin as a key is a mistake, not a configuration.
+  if (!Number.isInteger(fd) || fd < 3) {
+    throw new Error(`REVIEWPASS_API_KEY_FD must be a descriptor number of 3 or more, got ${JSON.stringify(raw)}`);
+  }
+  let key: string;
+  try {
+    key = readFileSync(fd, 'utf8').trim();
+  } finally {
+    closeSync(fd);
+  }
+  if (!key) throw new Error(`REVIEWPASS_API_KEY_FD: descriptor ${fd} held no key`);
+  keyFromFd = key;
+}
+
+/** The model API key: from `loadApiKeyFromFd` if it ran, else the environment. */
+export const apiKey = (): string | undefined => keyFromFd ?? envAny('API_KEY');
+
 /**
  * Effort levels, across the backends this talks to — they do not agree.
  *
@@ -332,7 +365,7 @@ const EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
  * file would take the whole review down rather than degrade it — and a config
  * file is not type-checked on the way in, whatever the union says.
  */
-function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
+export function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
   return (EFFORTS as readonly unknown[]).includes(v)
     ? (v as ReviewpassConfig['model']['reasoningEffort'])
     : undefined;

@@ -10,8 +10,11 @@ import { writeFileSync } from 'node:fs';
 import { runReview } from './pipeline.js';
 import { LocalSource } from './local/source.js';
 import { renderFinding } from './github/client.js';
-
+import { loadApiKeyFromFd } from './config/index.js';
 import { importLearnings } from './store/import.js';
+
+// Before anything is spawned: a child would inherit the descriptor.
+loadApiKeyFromFd();
 
 const argv = process.argv.slice(2);
 const arg = (name: string, dflt?: string) => {

@@ -1,7 +1,8 @@
 import { Agent, fetch as undiciFetch } from 'undici';
 import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages, type ClaudeCodeResult } from './claude-code.js';
 import { ClaudeTokenPool, defaultStatePath, parseTokens } from './claude-tokens.js';
-import { envAny, type ReviewpassConfig } from '../config/index.js';
+import { fallbackFromEnv } from './fallback.js';
+import { apiKey, envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -94,7 +95,8 @@ export class ModelClient {
 
   private readonly transport: Agent;
 
-  constructor(private cfg: ReviewpassConfig) {
+  /** `key` supplies the bearer token: the review's API key unless this client is the fallback. */
+  constructor(private cfg: ReviewpassConfig, private readonly key: () => string | undefined = apiKey) {
     this.transport = modelTransport(cfg.model.requestTimeoutMs);
   }
 
@@ -125,6 +127,52 @@ export class ModelClient {
         : null;
     }
     return this.tokenPool;
+  }
+
+  /** Set from REVIEWPASS_FALLBACK_* on first need; null when none is configured. */
+  private fallbackClient?: ModelClient | null;
+  /** The fallback model's name once any call of this review went to it. */
+  private fellBackTo?: string;
+
+  private get fallback(): ModelClient | null {
+    if (this.fallbackClient === undefined) {
+      const f = fallbackFromEnv(this.cfg);
+      this.fallbackClient = f ? new ModelClient(f.config, () => f.key) : null;
+    }
+    return this.fallbackClient;
+  }
+
+  /**
+   * The fallback model, if any call of this review used it: the review says so,
+   * since its findings then come from a different model than the configured one.
+   */
+  get fallbackModel(): string | undefined {
+    return this.fellBackTo;
+  }
+
+  /**
+   * A Claude call, or the fallback's when the subscription is spent. Only a usage
+   * limit hands over - with a token pool, that means every token is at its limit
+   * or rejected. Each call asks the pool again, so a token that resets mid-review
+   * takes the next call back. The fallback model replaces the Claude one this
+   * call named, and its own effort replaces Claude's.
+   */
+  private async viaClaudeOrFallback(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
+    try {
+      return await this.viaClaudeCode(messages, opts);
+    } catch (err) {
+      if (!(err instanceof ClaudeLimitError)) throw err;
+      const fallback = this.fallback;
+      if (!fallback) throw err;
+      if (!this.fellBackTo) {
+        this.fellBackTo = fallback.cfg.model.name;
+        console.error(`  ${err.message.slice(0, 160)}; reviewing with ${this.fellBackTo} until a token is free`);
+      }
+      const r = await fallback.raw(messages, { ...opts, model: undefined, reasoningEffort: undefined });
+      this.totalPrompt += r.promptTokens;
+      this.totalCompletion += r.completionTokens;
+      return r;
+    }
   }
 
   /**
@@ -261,7 +309,7 @@ export class ModelClient {
   }
 
   private async raw(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
-    if (this.cfg.model.backend === 'claude-code') return this.viaClaudeCode(messages, opts);
+    if (this.cfg.model.backend === 'claude-code') return this.viaClaudeOrFallback(messages, opts);
     const body: Record<string, unknown> = {
       model: opts.model ?? this.cfg.model.name,
       messages,
@@ -311,16 +359,15 @@ export class ModelClient {
     // outcomes. Say so once, and send a request the endpoint can actually serve.
     const endpointBase = this.cfg.model.endpoint;
     const routesThroughOpenRouter = /openrouter\.ai/i.test(endpointBase);
-    if (provider && Object.keys(provider).length) {
-      if (routesThroughOpenRouter) {
-        body.provider = provider;
-      } else if (!ModelClient.warnedAboutProvider) {
-        ModelClient.warnedAboutProvider = true;
-        console.error(
-          `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
-          + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
-        );
-      }
+    if (routesThroughOpenRouter) {
+      const routed = openRouterProvider(provider, Boolean(opts.schema));
+      if (Object.keys(routed).length) body.provider = routed;
+    } else if (provider && Object.keys(provider).length && !ModelClient.warnedAboutProvider) {
+      ModelClient.warnedAboutProvider = true;
+      console.error(
+        `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
+        + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
+      );
     }
     let droppedZdr = false;
     let loosenedFormat = false;
@@ -342,7 +389,7 @@ export class ModelClient {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(envAny('API_KEY') ? { Authorization: `Bearer ${envAny('API_KEY')}` } : {}),
+            ...(this.key() ? { Authorization: `Bearer ${this.key()}` } : {}),
           },
           body: JSON.stringify(body),
           signal: ctl.signal,
@@ -419,7 +466,11 @@ export class ModelClient {
         // only when the operator chose `prefer`.
         if (zdrPreferred && !droppedZdr && /no healthy upstream|no (allowed|available) providers/i.test(String(err))) {
           droppedZdr = true;
-          delete body.provider;
+          // Only the retention filter goes; `require_parameters` still keeps
+          // the request off providers that would ignore the schema.
+          const { zdr: _zdr, ...rest } = body.provider as Record<string, unknown>;
+          if (Object.keys(rest).length) body.provider = rest;
+          else delete body.provider;
           console.error(`  no zero-retention provider is serving ${body.model}; falling back to the open pool for this request`);
           continue;
         }
@@ -434,6 +485,24 @@ export class ModelClient {
       + String(lastErr).slice(0, 300),
     );
   }
+}
+
+/**
+ * The `provider` field for an OpenRouter request.
+ *
+ * OpenRouter routes on price by default and does not check that the provider it
+ * picks supports the request's parameters: a strict `json_schema` sent to one
+ * that lacks structured outputs is dropped, and the model answers in whatever
+ * shape it likes. On #5891 that sent DeepSeek V4 Pro to its cheapest provider
+ * (no structured outputs) and 26 of 27 files came back unparseable. So a schema
+ * request requires the parameters to be supported; an operator who configured
+ * `require_parameters` either way keeps their choice.
+ */
+export function openRouterProvider(
+  configured: Record<string, unknown> | undefined,
+  schema: boolean,
+): Record<string, unknown> {
+  return schema ? { require_parameters: true, ...configured } : { ...configured };
 }
 
 /** Recover the largest balanced JSON object from a truncated response. */

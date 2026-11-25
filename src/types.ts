@@ -156,4 +156,6 @@ export interface ReviewResult {
   blocked?: { message: string };
   /** Verified findings listed in the review body rather than posted inline. */
   listed?: Finding[];
+  /** The model that took over some or all of the calls because Claude was at its usage limit. */
+  fallbackModel?: string;
 }

@@ -1,3 +1,5 @@
+import { apiKey } from '../config/index.js';
+
 /**
  * Why a review could not run, said in one sentence a person can act on.
  *
@@ -33,7 +35,7 @@ const CREDITS = /insufficient credits|quota|billing|payment required/i;
  * the value goes nowhere, because this string is posted to a pull request.
  */
 function keyShapeHint(): string {
-  const key = process.env.REVIEWPASS_API_KEY ?? process.env.WARREN_API_KEY ?? '';
+  const key = apiKey() ?? '';
   if (!key) return ' No API key is set.';
   if (/^ssh-(ed25519|rsa)\b/.test(key)) {
     return ' The key looks like an SSH public key rather than a bearer token'

@@ -34,6 +34,11 @@ export interface ModelSetting {
   backend?: ReviewpassConfig['model']['backend'];
   /** reviewpass only: review settings over the case repository's, e.g. `{ "findSamples": 6 }`. */
   review?: Partial<ReviewpassConfig['review']>;
+  /**
+   * OpenRouter's `provider` routing, sent verbatim, e.g. `{ "only": ["inceptron"] }`.
+   * Not part of the method key: tell two routings apart with `label`.
+   */
+  provider?: Record<string, unknown>;
 }
 
 /** A method key as it appears in run file names. */
@@ -139,6 +144,7 @@ export async function runReviewpass(c: Case, m: ModelSetting, run: number): Prom
       configOverrides: {
         endpoint: m.endpoint, endpoints: [m.endpoint], name: m.name, verifyModel: m.verifyName ?? m.name,
         ...(m.backend ? { backend: m.backend } : {}),
+        ...(m.provider ? { provider: m.provider } : {}),
         reasoningEffort: m.effort, verifyReasoningEffort: m.verifyEffort, maxTokens: m.maxTokens,
       },
       reviewOverrides: m.review,
@@ -213,6 +219,7 @@ export async function runRaw(c: Case, m: ModelSetting, run: number): Promise<Run
   cfg.model.name = m.name;
   cfg.model.reasoningEffort = m.effort;
   if (m.backend) cfg.model.backend = m.backend;
+  if (m.provider) cfg.model.provider = m.provider;
   const diff = execFileSync('git', ['-C', c.workspace, 'diff', '--no-renames', `${c.base}...${c.head}`],
     { encoding: 'utf8', maxBuffer: 1e9 });
   const paths = execFileSync('git', ['-C', c.workspace, 'diff', '--name-only', '--no-renames', `${c.base}...${c.head}`],
