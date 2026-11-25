@@ -36,6 +36,11 @@ export REVIEWPASS_API_KEY=sk-...
 export REVIEWPASS_ENDPOINT=https://openrouter.ai/api/v1
 ```
 
+A wrapper that keeps the key out of the environment, where every process
+reviewpass starts would inherit it, can pass it on a file descriptor instead:
+`REVIEWPASS_API_KEY_FD=3 reviewpass … 3< <(printf %s "$key")`. reviewpass reads
+and closes the descriptor before it starts anything else.
+
 No GitHub token, no network access to GitHub, and nothing is posted anywhere.
 
 Other ranges:
@@ -103,7 +108,11 @@ a broker, constrain that:
 
 Or set `model.provider` in `.reviewpass.yaml` for finer control — an explicit
 provider order, exclusions, whatever your broker accepts. reviewpass passes that
-block through without interpreting it.
+block through without interpreting it, with one addition on OpenRouter: requests
+that carry a JSON schema get `require_parameters: true`, so they only go to
+providers that support structured outputs. A provider without them ignores the
+schema and most files come back unreadable. Set `require_parameters: false` in
+the block to route on price alone.
 
 ### Handing the work to a daemon
 

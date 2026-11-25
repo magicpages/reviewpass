@@ -1,7 +1,7 @@
 import { Agent, fetch as undiciFetch } from 'undici';
 import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages, type ClaudeCodeResult } from './claude-code.js';
 import { ClaudeTokenPool, defaultStatePath, parseTokens } from './claude-tokens.js';
-import { envAny, type ReviewpassConfig } from '../config/index.js';
+import { apiKey, envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -311,16 +311,15 @@ export class ModelClient {
     // outcomes. Say so once, and send a request the endpoint can actually serve.
     const endpointBase = this.cfg.model.endpoint;
     const routesThroughOpenRouter = /openrouter\.ai/i.test(endpointBase);
-    if (provider && Object.keys(provider).length) {
-      if (routesThroughOpenRouter) {
-        body.provider = provider;
-      } else if (!ModelClient.warnedAboutProvider) {
-        ModelClient.warnedAboutProvider = true;
-        console.error(
-          `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
-          + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
-        );
-      }
+    if (routesThroughOpenRouter) {
+      const routed = openRouterProvider(provider, Boolean(opts.schema));
+      if (Object.keys(routed).length) body.provider = routed;
+    } else if (provider && Object.keys(provider).length && !ModelClient.warnedAboutProvider) {
+      ModelClient.warnedAboutProvider = true;
+      console.error(
+        `  provider routing (REVIEWPASS_ZDR) is an OpenRouter feature and ${endpointBase} is not OpenRouter — `
+        + 'ignoring it. Whatever retention policy that endpoint has applies instead.',
+      );
     }
     let droppedZdr = false;
     let loosenedFormat = false;
@@ -342,7 +341,7 @@ export class ModelClient {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(envAny('API_KEY') ? { Authorization: `Bearer ${envAny('API_KEY')}` } : {}),
+            ...(apiKey() ? { Authorization: `Bearer ${apiKey()}` } : {}),
           },
           body: JSON.stringify(body),
           signal: ctl.signal,
@@ -419,7 +418,11 @@ export class ModelClient {
         // only when the operator chose `prefer`.
         if (zdrPreferred && !droppedZdr && /no healthy upstream|no (allowed|available) providers/i.test(String(err))) {
           droppedZdr = true;
-          delete body.provider;
+          // Only the retention filter goes; `require_parameters` still keeps
+          // the request off providers that would ignore the schema.
+          const { zdr: _zdr, ...rest } = body.provider as Record<string, unknown>;
+          if (Object.keys(rest).length) body.provider = rest;
+          else delete body.provider;
           console.error(`  no zero-retention provider is serving ${body.model}; falling back to the open pool for this request`);
           continue;
         }
@@ -434,6 +437,24 @@ export class ModelClient {
       + String(lastErr).slice(0, 300),
     );
   }
+}
+
+/**
+ * The `provider` field for an OpenRouter request.
+ *
+ * OpenRouter routes on price by default and does not check that the provider it
+ * picks supports the request's parameters: a strict `json_schema` sent to one
+ * that lacks structured outputs is dropped, and the model answers in whatever
+ * shape it likes. On #5891 that sent DeepSeek V4 Pro to its cheapest provider
+ * (no structured outputs) and 26 of 27 files came back unparseable. So a schema
+ * request requires the parameters to be supported; an operator who configured
+ * `require_parameters` either way keeps their choice.
+ */
+export function openRouterProvider(
+  configured: Record<string, unknown> | undefined,
+  schema: boolean,
+): Record<string, unknown> {
+  return schema ? { require_parameters: true, ...configured } : { ...configured };
 }
 
 /** Recover the largest balanced JSON object from a truncated response. */
