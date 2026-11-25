@@ -703,6 +703,7 @@ export async function runReview(opts: RunOptions): Promise<RunOutcome> {
     findings, walkthrough: walk.summary, fileGroups: walk.groups,
     effort: walk.effort, mergeRisk: walk.mergeRisk, checks, event, skipped,
     reviewedFiles, failedFiles: failures, blocked, openFindings: prior.openFindings, listed: triaged.listed,
+    fallbackModel: model.fallbackModel,
   };
 
   // ── post ──────────────────────────────────────────────────────────────────

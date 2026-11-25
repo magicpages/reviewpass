@@ -114,6 +114,30 @@ providers that support structured outputs. A provider without them ignores the
 schema and most files come back unreadable. Set `require_parameters: false` in
 the block to route on price alone.
 
+### When the Claude subscription is spent
+
+With `REVIEWPASS_BACKEND: claude-code`, every call runs through the Claude Code
+CLI on a subscription, and a usage limit used to refuse the whole review until it
+reset. Name a fallback and those calls go to an OpenAI-compatible endpoint
+instead, until a token is free again:
+
+```yaml
+        env:
+          REVIEWPASS_FALLBACK_ENDPOINT: https://openrouter.ai/api/v1
+          REVIEWPASS_FALLBACK_MODEL: z-ai/glm-5.3-flash
+          REVIEWPASS_FALLBACK_REASONING_EFFORT: low
+          # OpenRouter's routing block, as JSON. Optional.
+          REVIEWPASS_FALLBACK_PROVIDER: '{"only":["inceptron"],"allow_fallbacks":false}'
+          REVIEWPASS_FALLBACK_API_KEY: ${{ secrets.REVIEWPASS_FALLBACK_API_KEY }}
+```
+
+The fallback model both finds and verifies. Only a usage limit hands over: with
+several tokens in `REVIEWPASS_CLAUDE_TOKENS`, that means all of them are at their
+limit. Every call asks again, so a token that resets mid-review takes the next
+call back. The review body says which model stood in. reviewpass reads these
+settings from the environment only, never from `.reviewpass.yaml`, so a pull
+request cannot send the key to an endpoint of its own.
+
 ### Handing the work to a daemon
 
 If your runners sit on the same machine as your models, `daemon-url` posts the

@@ -365,7 +365,7 @@ const EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
  * file would take the whole review down rather than degrade it — and a config
  * file is not type-checked on the way in, whatever the union says.
  */
-function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
+export function validEffort(v: unknown): ReviewpassConfig['model']['reasoningEffort'] {
   return (EFFORTS as readonly unknown[]).includes(v)
     ? (v as ReviewpassConfig['model']['reasoningEffort'])
     : undefined;

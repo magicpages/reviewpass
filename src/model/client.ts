@@ -1,6 +1,7 @@
 import { Agent, fetch as undiciFetch } from 'undici';
 import { claudeCodeCall, ClaudeAuthError, ClaudeLimitError, splitMessages, type ClaudeCodeResult } from './claude-code.js';
 import { ClaudeTokenPool, defaultStatePath, parseTokens } from './claude-tokens.js';
+import { fallbackFromEnv } from './fallback.js';
 import { apiKey, envAny, type ReviewpassConfig } from '../config/index.js';
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
@@ -94,7 +95,8 @@ export class ModelClient {
 
   private readonly transport: Agent;
 
-  constructor(private cfg: ReviewpassConfig) {
+  /** `key` supplies the bearer token: the review's API key unless this client is the fallback. */
+  constructor(private cfg: ReviewpassConfig, private readonly key: () => string | undefined = apiKey) {
     this.transport = modelTransport(cfg.model.requestTimeoutMs);
   }
 
@@ -125,6 +127,52 @@ export class ModelClient {
         : null;
     }
     return this.tokenPool;
+  }
+
+  /** Set from REVIEWPASS_FALLBACK_* on first need; null when none is configured. */
+  private fallbackClient?: ModelClient | null;
+  /** The fallback model's name once any call of this review went to it. */
+  private fellBackTo?: string;
+
+  private get fallback(): ModelClient | null {
+    if (this.fallbackClient === undefined) {
+      const f = fallbackFromEnv(this.cfg);
+      this.fallbackClient = f ? new ModelClient(f.config, () => f.key) : null;
+    }
+    return this.fallbackClient;
+  }
+
+  /**
+   * The fallback model, if any call of this review used it: the review says so,
+   * since its findings then come from a different model than the configured one.
+   */
+  get fallbackModel(): string | undefined {
+    return this.fellBackTo;
+  }
+
+  /**
+   * A Claude call, or the fallback's when the subscription is spent. Only a usage
+   * limit hands over - with a token pool, that means every token is at its limit
+   * or rejected. Each call asks the pool again, so a token that resets mid-review
+   * takes the next call back. The fallback model replaces the Claude one this
+   * call named, and its own effort replaces Claude's.
+   */
+  private async viaClaudeOrFallback(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
+    try {
+      return await this.viaClaudeCode(messages, opts);
+    } catch (err) {
+      if (!(err instanceof ClaudeLimitError)) throw err;
+      const fallback = this.fallback;
+      if (!fallback) throw err;
+      if (!this.fellBackTo) {
+        this.fellBackTo = fallback.cfg.model.name;
+        console.error(`  ${err.message.slice(0, 160)}; reviewing with ${this.fellBackTo} until a token is free`);
+      }
+      const r = await fallback.raw(messages, { ...opts, model: undefined, reasoningEffort: undefined });
+      this.totalPrompt += r.promptTokens;
+      this.totalCompletion += r.completionTokens;
+      return r;
+    }
   }
 
   /**
@@ -261,7 +309,7 @@ export class ModelClient {
   }
 
   private async raw(messages: ChatMessage[], opts: CallOptions): Promise<CallResult<string>> {
-    if (this.cfg.model.backend === 'claude-code') return this.viaClaudeCode(messages, opts);
+    if (this.cfg.model.backend === 'claude-code') return this.viaClaudeOrFallback(messages, opts);
     const body: Record<string, unknown> = {
       model: opts.model ?? this.cfg.model.name,
       messages,
@@ -341,7 +389,7 @@ export class ModelClient {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(apiKey() ? { Authorization: `Bearer ${apiKey()}` } : {}),
+            ...(this.key() ? { Authorization: `Bearer ${this.key()}` } : {}),
           },
           body: JSON.stringify(body),
           signal: ctl.signal,
