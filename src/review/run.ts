@@ -11,6 +11,7 @@ import {
   REVIEWER_SYSTEM, VERIFIER_SYSTEM, WALKTHROUGH_SYSTEM, CHECKS_SYSTEM,
   buildFindingPrompt, buildVerifyPrompt, buildGroupVerifyPrompt, truncate,
 } from './prompt.js';
+import { findingsOf } from './reply-shape.js';
 
 /**
  * How much room a verify call gets, and how cold it runs.
@@ -115,7 +116,7 @@ async function sampleFindings(
   focus: string,
 ): Promise<RawFinding[]> {
   const prompt = buildFindingPrompt(pr, unit);
-  const { value } = await model.json<{ findings: RawFinding[] }>(
+  const { value } = await model.json<unknown>(
     [
       { role: 'system', content: REVIEWER_SYSTEM },
       {
@@ -135,20 +136,25 @@ async function sampleFindings(
   // That turns a loud failure into a false all-clear, which is the one outcome
   // this reviewer must never produce. An empty array is a real answer; a
   // missing one is not.
-  if (!Array.isArray(value?.findings)) {
+  // The wrapper, the bare array and a single finding object are all read;
+  // `reply-shape.ts` translates the key names an endpoint that accepted the
+  // schema without enforcing it produces. A reply with no finding-like object
+  // at all is still null here, and still a failed pass.
+  const raw = findingsOf(value, unit.path);
+  if (!raw) {
     throw new Error('model reply had no findings array (recovered an object of the wrong shape)');
   }
   // The same false all-clear, one level down. Salvage can return an array whose
   // entries the pipeline cannot place: without numeric lines `findInFile` reads
   // each one as drift and drops it, and without a title or body `.trim()` throws.
   // A reply made only of those ignored the schema - it is not a clean file.
-  const usable = value.findings.filter(isUsable);
-  if (value.findings.length && !usable.length) {
-    throw new Error(`model reply's ${value.findings.length} finding(s) had no line numbers, title or body `
+  const usable = raw.filter(isUsable);
+  if (raw.length && !usable.length) {
+    throw new Error(`model reply's ${raw.length} finding(s) had no line numbers, title or body `
       + '(a reply that ignored the schema)');
   }
-  if (usable.length < value.findings.length) {
-    console.error(`  ${unit.path}: dropped ${value.findings.length - usable.length} of ${value.findings.length} `
+  if (usable.length < raw.length) {
+    console.error(`  ${unit.path}: dropped ${raw.length - usable.length} of ${raw.length} `
       + 'finding(s) the model returned without line numbers, title or body');
   }
   return usable;
@@ -271,7 +277,7 @@ export async function findInChange(
   sample: number,
 ): Promise<Finding[]> {
   const prompt = wholeChangePrompt(pr, units, cfg.model.contextBudget * 4);
-  const { value } = await model.json<{ findings: (RawFinding & { path: string })[] }>(
+  const { value } = await model.json<unknown>(
     [
       { role: 'system', content: 'Review this pull request as a whole. Report the real defects the change introduces, '
         + 'including those that only show across files, each with the changed file and the lines it concerns in the new '
@@ -281,12 +287,16 @@ export async function findInChange(
     WHOLE_CHANGE_SCHEMA,
     { schemaName: 'findings', maxTokens: cfg.model.maxTokens, temperature: cfg.model.temperature },
   );
-  if (!Array.isArray(value?.findings)) throw new Error('model reply had no findings array');
-  const usable = value.findings.filter((r) => isUsable(r) && typeof (r as { path?: unknown }).path === 'string');
+  const raw = findingsOf(value, '');
+  if (!raw) throw new Error('model reply had no findings array');
+  const usable = raw.filter(
+    (r): r is RawFinding & { path: string } =>
+      isUsable(r) && typeof (r as { path?: unknown }).path === 'string',
+  );
   // A reply whose every finding lacks a file or lines ignored the schema; it is
   // a failed pass, not a change with nothing wrong in it.
-  if (value.findings.length && !usable.length) {
-    throw new Error(`whole-change reply's ${value.findings.length} finding(s) had no file, line numbers, title or body`);
+  if (raw.length && !usable.length) {
+    throw new Error(`whole-change reply's ${raw.length} finding(s) had no file, line numbers, title or body`);
   }
 
   const byPath = new Map(units.map((u) => [u.path, u]));
